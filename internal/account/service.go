@@ -335,7 +335,7 @@ func (s *Service) ResetQuota(id int64) error {
 }
 
 func (s *Service) IncrementDailyTaskCount(id int64) error {
-	today := time.Now().Format("2006-01-02")
+	today := time.Now().UTC().Format("2006-01-02")
 	_, err := s.db.Exec(`
 		UPDATE pikpak_accounts SET
 			daily_task_count = CASE WHEN last_task_date = ? THEN daily_task_count + 1 ELSE 1 END,
@@ -348,7 +348,7 @@ func (s *Service) IncrementDailyTaskCount(id int64) error {
 
 // AutoResetDailyQuotas resets quota exhausted state and daily task counts if a new day has arrived (UTC 00:00)
 func (s *Service) AutoResetDailyQuotas() error {
-	today := time.Now().Format("2006-01-02")
+	today := time.Now().UTC().Format("2006-01-02")
 	_, err := s.db.Exec(`
 		UPDATE pikpak_accounts SET
 			status = CASE WHEN status = 'QUOTA_EXHAUSTED' THEN 'HEALTHY' ELSE status END,
