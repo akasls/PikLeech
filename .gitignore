@@ -1,0 +1,21 @@
+﻿# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+pikpak-manager
+
+# Directories
+data/
+node_modules/
+web/node_modules/
+.reference/
+
+# Environment files
+.env
+
+# SQLite
+*.db
+*.db-wal
+*.db-shm

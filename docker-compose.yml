@@ -1,0 +1,26 @@
+﻿version: '3.8'
+
+services:
+  pikpak-manager:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: pikpak-manager:latest
+    container_name: pikpak-manager
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+    environment:
+      - PORT=8080
+      - DATA_DIR=/data
+      - APP_SECRET=${APP_SECRET:-generate-a-strong-32-char-secret-key!}
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123456}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
