@@ -58,8 +58,9 @@ func (s *Service) ListFiles(ctx context.Context, parentVirtualID string, sortBy,
 	for _, f := range resp.Files {
 		vf := s.convertToFile(f, acc.ID, acc.Name)
 		result = append(result, vf)
-		// Update cache asynchronously
-		go s.cacheFile(vf)
+	}
+	if len(result) > 0 {
+		go s.cacheFiles(result)
 	}
 
 	s.sortFiles(result, sortBy, sortOrder)
@@ -102,7 +103,9 @@ func (s *Service) listUnifiedRoot(ctx context.Context, sortBy, sortOrder string)
 			for _, f := range resp.Files {
 				vf := s.convertToFile(f, a.ID, a.Name)
 				converted = append(converted, vf)
-				go s.cacheFile(vf)
+			}
+			if len(converted) > 0 {
+				go s.cacheFiles(converted)
 			}
 
 			mu.Lock()
@@ -134,14 +137,23 @@ func (s *Service) convertToFile(f pikpak.FileItem, accID int64, accName string) 
 		IsFolder:      isFolder,
 		IsVideo:       isVideo,
 		ThumbnailLink: f.ThumbnailLink,
-		CreatedTime:   f.CreatedTime,
-		ModifiedTime:  f.ModifiedTime,
+		CreatedTime:   f.CreatedTime.Time(),
+		ModifiedTime:  f.ModifiedTime.Time(),
 	}
 }
 
-func (s *Service) cacheFile(vf VirtualFile) {
+func (s *Service) cacheFiles(files []VirtualFile) {
+	if len(files) == 0 {
+		return
+	}
 	now := time.Now().UTC()
-	_, _ = s.db.Exec(`
+	tx, err := s.db.Begin()
+	if err != nil {
+		return
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare(`
 		INSERT INTO file_cache (
 			virtual_id, account_id, pikpak_file_id, parent_id,
 			name, size, mime_type, kind, thumbnail_link,
@@ -153,9 +165,24 @@ func (s *Service) cacheFile(vf VirtualFile) {
 			thumbnail_link = excluded.thumbnail_link,
 			modified_time = excluded.modified_time,
 			updated_at = excluded.updated_at
-	`, vf.VirtualID, vf.AccountID, vf.PikPakFileID, vf.ParentID,
-		vf.Name, vf.Size, vf.MimeType, vf.Kind, vf.ThumbnailLink,
-		vf.CreatedTime, vf.ModifiedTime, now)
+	`)
+	if err != nil {
+		return
+	}
+	defer stmt.Close()
+
+	for _, vf := range files {
+		_, _ = stmt.Exec(
+			vf.VirtualID, vf.AccountID, vf.PikPakFileID, vf.ParentID,
+			vf.Name, vf.Size, vf.MimeType, vf.Kind, vf.ThumbnailLink,
+			vf.CreatedTime, vf.ModifiedTime, now,
+		)
+	}
+	_ = tx.Commit()
+}
+
+func (s *Service) cacheFile(vf VirtualFile) {
+	s.cacheFiles([]VirtualFile{vf})
 }
 
 func (s *Service) sortFiles(files []VirtualFile, sortBy, sortOrder string) {

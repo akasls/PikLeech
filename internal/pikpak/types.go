@@ -1,6 +1,10 @@
-﻿package pikpak
+package pikpak
 
-import "time"
+import (
+	"strconv"
+	"strings"
+	"time"
+)
 
 // Constants for PikPak client signatures and clients
 const (
@@ -95,19 +99,57 @@ type FileListResponse struct {
 	NextPageToken string     `json:"next_page_token"`
 }
 
+// FlexibleTime parses ISO8601, RFC3339, timestamps, or empty string gracefully without error
+type FlexibleTime time.Time
+
+func (t *FlexibleTime) UnmarshalJSON(b []byte) error {
+	s := strings.Trim(string(b), "\"")
+	if s == "" || s == "null" || s == "0" {
+		*t = FlexibleTime(time.Time{})
+		return nil
+	}
+	layouts := []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02T15:04:05",
+		"2006-01-02 15:04:05",
+		"2006-01-02",
+	}
+	for _, l := range layouts {
+		if parsed, err := time.Parse(l, s); err == nil {
+			*t = FlexibleTime(parsed)
+			return nil
+		}
+	}
+	if sec, err := strconv.ParseInt(s, 10, 64); err == nil {
+		if sec > 1e11 {
+			*t = FlexibleTime(time.UnixMilli(sec))
+		} else {
+			*t = FlexibleTime(time.Unix(sec, 0))
+		}
+		return nil
+	}
+	*t = FlexibleTime(time.Time{})
+	return nil
+}
+
+func (t FlexibleTime) Time() time.Time {
+	return time.Time(t)
+}
+
 type FileItem struct {
-	ID             string    `json:"id"`
-	Kind           string    `json:"kind"` // "drive#file" or "drive#folder"
-	Name           string    `json:"name"`
-	ParentID       string    `json:"parent_id"`
-	Size           string    `json:"size"`
-	Hash           string    `json:"hash"`
-	ThumbnailLink  string    `json:"thumbnail_link"`
-	WebContentLink string    `json:"web_content_link"`
-	CreatedTime    time.Time `json:"created_time"`
-	ModifiedTime   time.Time `json:"modified_time"`
-	MimeType       string    `json:"mime_type"`
-	Medias         []Media   `json:"medias"`
+	ID             string       `json:"id"`
+	Kind           string       `json:"kind"` // "drive#file" or "drive#folder"
+	Name           string       `json:"name"`
+	ParentID       string       `json:"parent_id"`
+	Size           string       `json:"size"`
+	Hash           string       `json:"hash"`
+	ThumbnailLink  string       `json:"thumbnail_link"`
+	WebContentLink string       `json:"web_content_link"`
+	CreatedTime    FlexibleTime `json:"created_time"`
+	ModifiedTime   FlexibleTime `json:"modified_time"`
+	MimeType       string       `json:"mime_type"`
+	Medias         []Media      `json:"medias"`
 }
 
 type Media struct {

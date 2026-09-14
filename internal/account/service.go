@@ -88,7 +88,6 @@ func (s *Service) UpdateAccount(ctx context.Context, id int64, req UpdateAccount
 		return nil, err
 	}
 
-	proxyChanged := false
 	if req.Name != nil {
 		acc.Name = *req.Name
 	}
@@ -109,9 +108,8 @@ func (s *Service) UpdateAccount(ctx context.Context, id int64, req UpdateAccount
 		}
 		acc.RefreshTokenEnc = enc
 	}
-	if req.ProxyURL != nil && *req.ProxyURL != acc.ProxyURL {
+	if req.ProxyURL != nil {
 		acc.ProxyURL = *req.ProxyURL
-		proxyChanged = true
 	}
 	if req.Priority != nil {
 		acc.Priority = *req.Priority
@@ -132,12 +130,11 @@ func (s *Service) UpdateAccount(ctx context.Context, id int64, req UpdateAccount
 		return nil, fmt.Errorf("failed to update account: %w", err)
 	}
 
-	if proxyChanged {
-		s.clientsMu.Lock()
-		delete(s.clients, id)
-		s.clientsMu.Unlock()
-		log.Printf("[ACCOUNT] Account %d (%s) proxy updated to %s, recreated client", id, acc.Name, acc.ProxyURL)
-	}
+	// Invalidate cached client so changes (credentials, tokens, proxy) apply immediately
+	s.clientsMu.Lock()
+	delete(s.clients, id)
+	s.clientsMu.Unlock()
+	log.Printf("[ACCOUNT] Account %d (%s) updated, reloaded client cache", id, acc.Name)
 
 	return s.GetAccount(id)
 }
@@ -349,17 +346,18 @@ func (s *Service) IncrementDailyTaskCount(id int64) error {
 	return err
 }
 
-// AutoResetDailyQuotas resets quota exhausted state if a new day has arrived (UTC 00:00)
+// AutoResetDailyQuotas resets quota exhausted state and daily task counts if a new day has arrived (UTC 00:00)
 func (s *Service) AutoResetDailyQuotas() error {
 	today := time.Now().Format("2006-01-02")
 	_, err := s.db.Exec(`
 		UPDATE pikpak_accounts SET
-			status = 'HEALTHY',
-			quota_exhausted_at = NULL,
+			status = CASE WHEN status = 'QUOTA_EXHAUSTED' THEN 'HEALTHY' ELSE status END,
+			quota_exhausted_at = CASE WHEN status = 'QUOTA_EXHAUSTED' THEN NULL ELSE quota_exhausted_at END,
 			daily_task_count = 0,
 			last_task_date = ?
-		WHERE status = 'QUOTA_EXHAUSTED' AND (last_task_date IS NULL OR last_task_date != ?)
-	`, today, today)
+		WHERE (status = 'QUOTA_EXHAUSTED' AND (last_task_date IS NULL OR last_task_date != ?))
+		   OR (last_task_date IS NOT NULL AND last_task_date != ?)
+	`, today, today, today)
 	return err
 }
 

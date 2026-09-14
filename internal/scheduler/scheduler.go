@@ -1,4 +1,4 @@
-﻿package scheduler
+package scheduler
 
 import (
 	"context"
@@ -252,7 +252,12 @@ func (s *AccountScheduler) SubmitOfflineTask(ctx context.Context, downloadURL st
 			continue // Try next account
 		}
 
-		// Unknown/Network error that failed all 3 retries
+		if errors.Is(createErr, pikpak.ErrNetwork) {
+			log.Printf("[SCHEDULER] Account %d (%s) NETWORK ERROR after retries (%v). Failing over to next account...", acc.ID, acc.Name, createErr)
+			continue // Try next account
+		}
+
+		// Unknown error that failed all attempts
 		log.Printf("[SCHEDULER] Account %d (%s) error: %v", acc.ID, acc.Name, createErr)
 		return nil, nil, fmt.Errorf("task creation failed on account %s: %w", acc.Name, createErr)
 	}

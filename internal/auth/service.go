@@ -1,4 +1,4 @@
-﻿package auth
+package auth
 
 import (
 	"crypto/hmac"
@@ -157,6 +157,11 @@ func (s *Service) AuthMiddleware() gin.HandlerFunc {
 			if strings.HasPrefix(authHeader, "Bearer ") {
 				token = strings.TrimPrefix(authHeader, "Bearer ")
 			}
+		}
+
+		// Or check query parameter "token" (for media streaming / external video players)
+		if token == "" {
+			token = c.Query("token")
 		}
 
 		if token == "" {

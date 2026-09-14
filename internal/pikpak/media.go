@@ -1,4 +1,4 @@
-﻿package pikpak
+package pikpak
 
 import (
 	"context"
@@ -46,7 +46,12 @@ func (c *Client) OpenMediaStream(ctx context.Context, mediaURL string, rangeHead
 		req.Header.Set("Range", rangeHeader)
 	}
 
-	resp, err := c.httpClient.Do(req)
+	client := c.streamingClient
+	if client == nil {
+		client = c.httpClient
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, ClassifyError(err, 0, nil)
 	}

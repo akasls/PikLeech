@@ -44,6 +44,7 @@ type Client struct {
 	captchaToken   string
 	proxyURL       string
 	httpClient     *http.Client
+	streamingClient *http.Client
 	transport      *http.Transport
 	onTokenUpdated func(accessToken, refreshToken string)
 
@@ -78,6 +79,10 @@ func NewClient(opts ClientOptions) (*Client, error) {
 
 	c.httpClient = httpClient
 	c.transport = transport
+	c.streamingClient = &http.Client{
+		Transport: transport,
+		Timeout:   0, // No client timeout for long media streaming and large downloads
+	}
 	return c, nil
 }
 
@@ -179,6 +184,10 @@ func (c *Client) SetCooldown(duration time.Duration) {
 
 // DoRequest sends an authenticated HTTP request, handles automatic token refresh and error parsing.
 func (c *Client) DoRequest(ctx context.Context, method, reqURL string, reqBody interface{}, respResult interface{}) error {
+	return c.doRequest(ctx, method, reqURL, reqBody, respResult, false)
+}
+
+func (c *Client) doRequest(ctx context.Context, method, reqURL string, reqBody interface{}, respResult interface{}, retried bool) error {
 	if c.IsCooldown() {
 		return ErrRateLimited
 	}
@@ -234,11 +243,10 @@ func (c *Client) DoRequest(ctx context.Context, method, reqURL string, reqBody i
 
 	// Handle Token Expired (401, error_code 16, 4121, 4122)
 	classifiedErr := ClassifyError(nil, resp.StatusCode, respBytes)
-	if errors.Is(classifiedErr, ErrAuthFailed) {
-		// Attempt token refresh
+	if !retried && errors.Is(classifiedErr, ErrAuthFailed) {
+		// Attempt token refresh and retry at most once to prevent infinite recursive loop
 		if refreshErr := c.RefreshToken(ctx); refreshErr == nil {
-			// Retry once with new token
-			return c.DoRequest(ctx, method, reqURL, reqBody, respResult)
+			return c.doRequest(ctx, method, reqURL, reqBody, respResult, true)
 		}
 		return classifiedErr
 	}
@@ -266,6 +274,10 @@ func (c *Client) DoRequest(ctx context.Context, method, reqURL string, reqBody i
 
 func (c *Client) GetHTTPClient() *http.Client {
 	return c.httpClient
+}
+
+func (c *Client) GetStreamingClient() *http.Client {
+	return c.streamingClient
 }
 
 func (c *Client) GetTransport() *http.Transport {
