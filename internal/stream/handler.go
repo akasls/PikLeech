@@ -1,4 +1,4 @@
-﻿package stream
+package stream
 
 import (
 	"fmt"
@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"pikpak-manager/internal/fileagg"
+	"pikpak-manager/internal/pikpak"
 )
 
 type Handler struct {
@@ -34,7 +35,7 @@ func (h *Handler) GetPlaybackInfo(c *gin.Context) {
 		return
 	}
 
-	mediaURL, err := client.GetMediaURL(c.Request.Context(), vf.PikPakFileID)
+	details, err := client.GetPlaybackMediaDetails(c.Request.Context(), vf.PikPakFileID, vf.Name)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to get media URL: %v", err)})
 		return
@@ -42,15 +43,31 @@ func (h *Handler) GetPlaybackInfo(c *gin.Context) {
 
 	proxyStreamURL := fmt.Sprintf("/api/media/stream/%s", virtualID)
 
+	type StreamItem struct {
+		pikpak.PlayableMedia
+		ProxyURL string `json:"proxy_url"`
+	}
+
+	var streamItems []StreamItem
+	for _, m := range details.Medias {
+		streamItems = append(streamItems, StreamItem{
+			PlayableMedia: m,
+			ProxyURL:      fmt.Sprintf("/api/media/stream/%s?media_id=%s", virtualID, m.MediaID),
+		})
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"virtual_id":   vf.VirtualID,
 		"name":         vf.Name,
 		"size":         vf.Size,
 		"mime_type":    vf.MimeType,
 		"is_video":     vf.IsVideo,
-		"direct_url":   mediaURL,
+		"is_mkv":       details.IsMKV,
+		"direct_url":   details.DirectURL,
+		"origin_url":   details.OriginURL,
 		"proxy_url":    proxyStreamURL,
 		"account_name": vf.AccountName,
+		"medias":       streamItems,
 	})
 }
 
@@ -68,10 +85,21 @@ func (h *Handler) ProxyStream(c *gin.Context) {
 		return
 	}
 
-	mediaURL, err := client.GetMediaURL(c.Request.Context(), vf.PikPakFileID)
+	details, err := client.GetPlaybackMediaDetails(c.Request.Context(), vf.PikPakFileID, vf.Name)
 	if err != nil {
 		c.String(http.StatusBadGateway, "failed to resolve upstream media link: %v", err)
 		return
+	}
+
+	targetMediaID := c.Query("media_id")
+	mediaURL := details.DirectURL
+	if targetMediaID != "" {
+		for _, m := range details.Medias {
+			if m.MediaID == targetMediaID {
+				mediaURL = m.URL
+				break
+			}
+		}
 	}
 
 	rangeHdr := c.GetHeader("Range")

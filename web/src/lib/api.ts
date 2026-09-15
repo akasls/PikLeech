@@ -93,15 +93,31 @@ export interface DashboardStats {
   total_space: number
 }
 
+export interface MediaStreamItem {
+  media_id: string
+  media_name: string
+  resolution_name: string
+  width?: number
+  height?: number
+  video_codec?: string
+  audio_codec?: string
+  is_origin?: boolean
+  url: string
+  proxy_url: string
+}
+
 export interface PlaybackInfo {
   virtual_id: string
   name: string
   size: number
   mime_type: string
   is_video: boolean
+  is_mkv?: boolean
   direct_url: string
+  origin_url?: string
   proxy_url: string
   account_name: string
+  medias?: MediaStreamItem[]
 }
 
 export interface SystemSettings {

@@ -47,7 +47,7 @@
 
 ### 方式一：Docker Compose 一键部署
 
-创建 `docker-compose.yml` 文件：
+创建 `docker-compose.yml` 文件（无需配置繁琐环境变量，开箱即用）：
 
 ```yaml
 version: '3.8'
@@ -61,18 +61,6 @@ services:
       - "8080:8080"
     volumes:
       - ./data:/data
-    environment:
-      - PORT=8080
-      - DATA_DIR=/data
-      - APP_SECRET=your-random-32-character-secret-key!
-      - ADMIN_USERNAME=admin
-      - ADMIN_PASSWORD=admin123456
-      - LOG_LEVEL=INFO
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
 ```
 
 启动服务：
@@ -80,11 +68,14 @@ services:
 docker-compose up -d
 ```
 
-打开浏览器访问 `http://<你的VPS_IP>:8080`，默认账号 `admin`，密码 `admin123456`。
+打开浏览器访问 `http://<你的VPS_IP>:8080`：
+- **默认管理员账号**：`admin`
+- **默认管理员密码**：`admin123456`（首次登录后可在“系统设置”中随时修改）
+- **安全密钥**：系统首次启动会自动生成 32 位安全密钥并持久化保存至数据卷，无需手动干预。
 
 ---
 
-### 方式二：Docker CLI 单行运行
+### 方式二：Docker CLI 单行极简运行
 
 ```bash
 docker run -d \
@@ -92,11 +83,20 @@ docker run -d \
   --restart unless-stopped \
   -p 8080:8080 \
   -v $(pwd)/data:/data \
-  -e ADMIN_USERNAME=admin \
-  -e ADMIN_PASSWORD=admin123456 \
-  -e APP_SECRET=your-random-32-character-secret-key! \
   ghcr.io/akasls/pikleech:latest
 ```
+
+<details>
+<summary><b>⚙️ 高级自定义环境变量（可选）</b></summary>
+
+如需自定义默认密码或端口，可在容器启动时按需指定环境变量：
+- `PORT`: 服务监听端口（默认 `8080`）
+- `DATA_DIR`: 数据持久化目录（容器内默认 `/data`）
+- `ADMIN_USERNAME`: 初始管理员用户名（默认 `admin`）
+- `ADMIN_PASSWORD`: 初始管理员密码（默认 `admin123456`）
+- `APP_SECRET`: JWT 签名与加密密钥（若未指定，系统会自动在数据目录生成并持久化）
+- `LOG_LEVEL`: 日志级别（默认 `INFO`）
+</details>
 
 ---
 

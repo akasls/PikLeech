@@ -1,4 +1,4 @@
-﻿package config
+package config
 
 import (
 	"crypto/rand"
@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 type Config struct {
@@ -29,8 +30,17 @@ func Load() *Config {
 
 	appSecret := os.Getenv("APP_SECRET")
 	if appSecret == "" {
-		log.Println("[WARN] APP_SECRET not set! Using default secret for development. Set APP_SECRET for production!")
-		appSecret = "pikpak-default-secret-key-32-chars!!"
+		secretFile := filepath.Join(dataDir, ".secret_key")
+		if data, err := os.ReadFile(secretFile); err == nil && len(strings.TrimSpace(string(data))) >= 16 {
+			appSecret = strings.TrimSpace(string(data))
+		} else {
+			appSecret = GenerateRandomString(32)
+			if err := os.WriteFile(secretFile, []byte(appSecret), 0600); err != nil {
+				log.Printf("[WARN] Could not persist secret key to %s: %v", secretFile, err)
+			} else {
+				log.Printf("[INFO] Automatically generated and persisted secret key to %s", secretFile)
+			}
+		}
 	}
 
 	adminUser := getEnv("ADMIN_USERNAME", "admin")
