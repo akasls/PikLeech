@@ -14,6 +14,7 @@ import {
   X,
   Eye,
   Check,
+  CheckCircle2,
 } from "lucide-react"
 import { api, VirtualFile } from "../lib/api"
 import { formatBytes, formatDate } from "../lib/utils"
@@ -28,6 +29,7 @@ interface FilesPageProps {
   onOpenNewOffline?: () => void
   searchKeyword?: string
   onClearSearch?: () => void
+  newTaskSubmitted?: number
 }
 
 interface ContextMenuState {
@@ -41,9 +43,13 @@ export const FilesPage: React.FC<FilesPageProps> = ({
   onOpenNewOffline,
   searchKeyword = "",
   onClearSearch,
+  newTaskSubmitted = 0,
 }) => {
   const [files, setFiles] = useState<VirtualFile[]>([])
   const [loading, setLoading] = useState(true)
+  const [completeToast, setCompleteToast] = useState<string | null>(null)
+  const knownActiveTasksRef = React.useRef<Map<string, string>>(new Map())
+  const initialMountRef = React.useRef(true)
   const [breadcrumbs, setBreadcrumbs] = useState<BreadcrumbItem[]>([
     { virtualID: "root", name: "全部文件" },
   ])
@@ -99,6 +105,92 @@ export const FilesPage: React.FC<FilesPageProps> = ({
       loadFiles(currentFolder.virtualID)
     }
   }, [currentFolder.virtualID, searchKeyword])
+
+  // Watcher to detect task completion and auto-refresh files
+  const checkTaskStatus = React.useCallback(async () => {
+    try {
+      const res = await api.listTasks("", 20, 0)
+      const tasks = res?.tasks || []
+      let completedFound = false
+      let completedName = ""
+
+      const currentActive = new Map<string, string>()
+
+      for (const t of tasks) {
+        if (t.status === "RUNNING" || t.status === "PENDING") {
+          currentActive.set(t.id, t.status)
+        } else if (t.status === "COMPLETE") {
+          if (knownActiveTasksRef.current.has(t.id)) {
+            completedFound = true
+            completedName = t.file_name || "文件"
+          }
+        }
+      }
+
+      knownActiveTasksRef.current = currentActive
+
+      if (completedFound && !initialMountRef.current) {
+        setCompleteToast(`离线下载完成:「${completedName}」，已自动刷新文件列表`)
+        // Auto refresh files in current folder
+        try {
+          const freshFiles = await api.listFiles(currentFolder.virtualID, "name", "asc")
+          setFiles(freshFiles || [])
+        } catch (e) {
+          console.error("Auto refresh failed:", e)
+        }
+      }
+
+      return currentActive.size > 0
+    } catch {
+      return false
+    } finally {
+      initialMountRef.current = false
+    }
+  }, [currentFolder.virtualID])
+
+  // Polling loop: 2.5s when active tasks exist, 8s when idle
+  useEffect(() => {
+    let timer: any = null
+    let active = true
+
+    const poll = async () => {
+      if (!active) return
+      const hasActive = await checkTaskStatus()
+      if (active) {
+        timer = setTimeout(poll, hasActive ? 2500 : 8000)
+      }
+    }
+
+    poll()
+
+    return () => {
+      active = false
+      if (timer) clearTimeout(timer)
+    }
+  }, [checkTaskStatus])
+
+  // Immediate check whenever user submits a new task
+  useEffect(() => {
+    if (newTaskSubmitted && newTaskSubmitted > 0) {
+      checkTaskStatus()
+      // Also reload files 1.5s later in case of instant cloud match (秒传)
+      const timeout = setTimeout(async () => {
+        try {
+          const fresh = await api.listFiles(currentFolder.virtualID, "name", "asc")
+          setFiles(fresh || [])
+        } catch {}
+      }, 1500)
+      return () => clearTimeout(timeout)
+    }
+  }, [newTaskSubmitted, checkTaskStatus, currentFolder.virtualID])
+
+  // Auto-dismiss complete toast after 4s
+  useEffect(() => {
+    if (completeToast) {
+      const timer = setTimeout(() => setCompleteToast(null), 4000)
+      return () => clearTimeout(timer)
+    }
+  }, [completeToast])
 
   // Context menu outside click & scroll listener
   useEffect(() => {
@@ -583,6 +675,20 @@ export const FilesPage: React.FC<FilesPageProps> = ({
           fileName={activeVideo.name}
           onClose={() => setActiveVideo(null)}
         />
+      )}
+
+      {/* Auto Refresh Floating Toast Notification */}
+      {completeToast && (
+        <div className="fixed bottom-16 sm:bottom-20 right-4 sm:right-6 z-50 flex items-center gap-2.5 rounded-2xl border border-emerald-500/40 bg-card/95 p-3.5 sm:px-4 sm:py-3 text-xs font-medium text-emerald-500 shadow-2xl backdrop-blur-md animate-in fade-in slide-in-from-bottom-5">
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500 animate-pulse" />
+          <span className="text-foreground">{completeToast}</span>
+          <button
+            onClick={() => setCompleteToast(null)}
+            className="ml-2 text-muted-foreground hover:text-foreground p-0.5 rounded-lg hover:bg-secondary"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
       )}
 
       {/* Floating Action Button (FAB) for New Offline Task */}

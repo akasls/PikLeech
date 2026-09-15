@@ -62,6 +62,7 @@ type Service struct {
 	accountService *account.Service
 	scheduler      *scheduler.AccountScheduler
 	pollerCancel   context.CancelFunc
+	wakeChan       chan struct{}
 }
 
 func NewService(db *sql.DB, accSvc *account.Service, sched *scheduler.AccountScheduler) *Service {
@@ -69,6 +70,17 @@ func NewService(db *sql.DB, accSvc *account.Service, sched *scheduler.AccountSch
 		db:             db,
 		accountService: accSvc,
 		scheduler:      sched,
+		wakeChan:       make(chan struct{}, 1),
+	}
+}
+
+// WakePoller triggers an immediate check of active offline tasks
+func (s *Service) WakePoller() {
+	if s.wakeChan != nil {
+		select {
+		case s.wakeChan <- struct{}{}:
+		default:
+		}
 	}
 }
 
@@ -121,22 +133,37 @@ func (s *Service) SubmitSingleLink(ctx context.Context, downloadURL, name, idemp
 	}
 
 	now := time.Now().UTC()
+	initStatus := "RUNNING"
+	initProgress := pikpakTask.Progress
+	var completedAt sql.NullTime
+
+	// Instant cloud matching (秒传) detection
+	if pikpakTask.Phase == "PHASE_TYPE_COMPLETE" || pikpakTask.Progress >= 100 {
+		initStatus = "COMPLETE"
+		initProgress = 100
+		completedAt = sql.NullTime{Time: now, Valid: true}
+		log.Printf("[OFFLINE] Task %s matched instantly (秒传完成)!", taskID)
+	}
+
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO offline_tasks (
 			id, source_url, file_name, account_id, pikpak_task_id, pikpak_file_id,
-			status, progress, error_message, user_id, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			status, progress, error_message, user_id, created_at, updated_at, completed_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, taskID, downloadURL, taskName, usedAccount.ID, pikpakTask.ID, pikpakTask.FileID,
-		"RUNNING", pikpakTask.Progress, "", userID, now, now)
+		initStatus, initProgress, "", userID, now, now, completedAt)
 	if err != nil {
 		log.Printf("[OFFLINE] Failed to save offline task %s: %v", taskID, err)
 	}
+
+	// Wake poller immediately for high-speed tracking
+	s.WakePoller()
 
 	res := &TaskResult{
 		ID:        taskID,
 		URL:       downloadURL,
 		Success:   true,
-		Status:    "RUNNING",
+		Status:    initStatus,
 		AccountID: usedAccount.ID,
 		Account:   usedAccount.Name,
 	}

@@ -14,6 +14,7 @@ export const App: React.FC = () => {
   const [currentPage, setCurrentPage] = useState<"files" | "settings">("files")
   const [searchKeyword, setSearchKeyword] = useState("")
   const [showNewOffline, setShowNewOffline] = useState(false)
+  const [taskSubmittedCount, setTaskSubmittedCount] = useState(0)
   const [isDarkMode, setIsDarkMode] = useState(() => {
     return localStorage.getItem("pikpak_theme") === "dark" ||
       (!localStorage.getItem("pikpak_theme") && window.matchMedia("(prefers-color-scheme: dark)").matches)
@@ -101,6 +102,7 @@ export const App: React.FC = () => {
             onOpenNewOffline={() => setShowNewOffline(true)}
             searchKeyword={searchKeyword}
             onClearSearch={() => setSearchKeyword("")}
+            newTaskSubmitted={taskSubmittedCount}
           />
         )}
         {currentPage === "settings" && (
@@ -118,7 +120,7 @@ export const App: React.FC = () => {
         <NewOfflineModal
           onClose={() => setShowNewOffline(false)}
           onSuccess={() => {
-            // Task submitted
+            setTaskSubmittedCount((c) => c + 1)
           }}
         />
       )}

@@ -33,6 +33,7 @@ export const NewOfflineModal: React.FC<NewOfflineModalProps> = ({
       const res = await api.submitOffline(lines.length === 1 ? lines[0] : lines)
       setResult(res)
       onSuccess()
+      onClose()
     } catch (err: any) {
       setError(err.message || "创建离线任务失败")
     } finally {

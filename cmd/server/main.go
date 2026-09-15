@@ -52,10 +52,10 @@ func main() {
 	auditSvc := audit.NewService(database)
 	dashSvc := dashboard.NewService(database)
 
-	// Start background task poller
+	// Start background task poller (2s interval + instant wake on submission)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	offSvc.StartPoller(ctx, 6*time.Second)
+	offSvc.StartPoller(ctx, 2*time.Second)
 
 	// Daily quota check ticker (every 10 minutes)
 	go func() {
