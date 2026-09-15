@@ -258,14 +258,46 @@ func (s *Service) GetClient(id int64) (*pikpak.Client, error) {
 	}
 
 	var password, refreshToken, accessToken string
+	var needsMigration bool
+
 	if acc.PasswordEnc != "" {
-		password, _ = crypto.Decrypt(acc.PasswordEnc, s.appSecret)
+		dec, decErr := crypto.DecryptWithFallback(acc.PasswordEnc, s.appSecret)
+		if decErr == nil {
+			password = dec
+			// If it only decrypted with fallback, mark for re-encryption with current secret
+			if _, primaryErr := crypto.Decrypt(acc.PasswordEnc, s.appSecret); primaryErr != nil {
+				needsMigration = true
+			}
+		}
 	}
 	if acc.RefreshTokenEnc != "" {
-		refreshToken, _ = crypto.Decrypt(acc.RefreshTokenEnc, s.appSecret)
+		dec, decErr := crypto.DecryptWithFallback(acc.RefreshTokenEnc, s.appSecret)
+		if decErr == nil {
+			refreshToken = dec
+			if _, primaryErr := crypto.Decrypt(acc.RefreshTokenEnc, s.appSecret); primaryErr != nil {
+				needsMigration = true
+			}
+		}
 	}
 	if acc.AccessTokenEnc != "" {
-		accessToken, _ = crypto.Decrypt(acc.AccessTokenEnc, s.appSecret)
+		dec, decErr := crypto.DecryptWithFallback(acc.AccessTokenEnc, s.appSecret)
+		if decErr == nil {
+			accessToken = dec
+			if _, primaryErr := crypto.Decrypt(acc.AccessTokenEnc, s.appSecret); primaryErr != nil {
+				needsMigration = true
+			}
+		}
+	}
+
+	// Seamlessly re-encrypt with current active secret
+	if needsMigration {
+		newPassEnc, _ := crypto.Encrypt(password, s.appSecret)
+		newRefreshEnc, _ := crypto.Encrypt(refreshToken, s.appSecret)
+		newAccessEnc, _ := crypto.Encrypt(accessToken, s.appSecret)
+		_, _ = s.db.Exec(`
+			UPDATE pikpak_accounts SET password_enc = ?, refresh_token_enc = ?, access_token_enc = ? WHERE id = ?
+		`, newPassEnc, newRefreshEnc, newAccessEnc, id)
+		log.Printf("[ACCOUNT] Migrated encryption key for account %d (%s) seamlessly", id, acc.Name)
 	}
 
 	client, err = pikpak.NewClient(pikpak.ClientOptions{
@@ -564,3 +596,17 @@ func (s *Service) InitializeAccount(ctx context.Context, id int64) error {
 
 	return nil
 }
+
+// SyncAllAccountsStorage synchronizes storage quota for all enabled accounts in the background.
+func (s *Service) SyncAllAccountsStorage(ctx context.Context) {
+	accounts, err := s.ListAccounts()
+	if err != nil {
+		return
+	}
+	for _, acc := range accounts {
+		if acc.IsEnabled && acc.Status != "AUTH_FAILED" && acc.Status != "PROXY_FAILED" {
+			_ = s.SyncAccountStorage(ctx, acc.ID)
+		}
+	}
+}
+

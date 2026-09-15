@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"pikpak-manager/internal/crypto"
 )
 
 type Config struct {
@@ -28,17 +30,28 @@ func Load() *Config {
 		dataDir = "/data"
 	}
 
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		log.Printf("[ERROR] Failed to create data directory %s: %v", dataDir, err)
+	}
+
 	appSecret := os.Getenv("APP_SECRET")
 	if appSecret == "" {
 		secretFile := filepath.Join(dataDir, ".secret_key")
 		if data, err := os.ReadFile(secretFile); err == nil && len(strings.TrimSpace(string(data))) >= 16 {
 			appSecret = strings.TrimSpace(string(data))
 		} else {
-			appSecret = GenerateRandomString(32)
-			if err := os.WriteFile(secretFile, []byte(appSecret), 0600); err != nil {
-				log.Printf("[WARN] Could not persist secret key to %s: %v", secretFile, err)
+			dbFile := filepath.Join(dataDir, "pikpak.db")
+			if _, err := os.Stat(dbFile); err == nil {
+				appSecret = crypto.LegacyDefaultSecret
+				_ = os.WriteFile(secretFile, []byte(appSecret), 0600)
+				log.Printf("[INFO] Existing database detected, using legacy default secret key for compatibility")
 			} else {
-				log.Printf("[INFO] Automatically generated and persisted secret key to %s", secretFile)
+				appSecret = GenerateRandomString(32)
+				if err := os.WriteFile(secretFile, []byte(appSecret), 0600); err != nil {
+					log.Printf("[WARN] Could not persist secret key to %s: %v", secretFile, err)
+				} else {
+					log.Printf("[INFO] Automatically generated and persisted secret key to %s", secretFile)
+				}
 			}
 		}
 	}
@@ -46,10 +59,6 @@ func Load() *Config {
 	adminUser := getEnv("ADMIN_USERNAME", "admin")
 	adminPass := getEnv("ADMIN_PASSWORD", "admin123456")
 	logLevel := getEnv("LOG_LEVEL", "INFO")
-
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		log.Printf("[ERROR] Failed to create data directory %s: %v", dataDir, err)
-	}
 
 	dbPath := filepath.Join(dataDir, "pikpak.db")
 

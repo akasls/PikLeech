@@ -1,4 +1,4 @@
-﻿package crypto
+package crypto
 
 import (
 	"crypto/aes"
@@ -14,6 +14,25 @@ import (
 var (
 	ErrDecryptionFailed = errors.New("decryption failed: invalid ciphertext or secret")
 )
+
+const LegacyDefaultSecret = "pikpak-default-secret-key-32-chars!!"
+
+// DecryptWithFallback tries decrypting with primary secret; if it fails and primary secret is not legacy, tries legacy secret.
+func DecryptWithFallback(ciphertextB64, primarySecret string) (string, error) {
+	if ciphertextB64 == "" {
+		return "", nil
+	}
+	res, err := Decrypt(ciphertextB64, primarySecret)
+	if err == nil {
+		return res, nil
+	}
+	if primarySecret != LegacyDefaultSecret {
+		if fallbackRes, fallbackErr := Decrypt(ciphertextB64, LegacyDefaultSecret); fallbackErr == nil {
+			return fallbackRes, nil
+		}
+	}
+	return "", err
+}
 
 // DeriveKey derives a 32-byte AES key from any secret string using SHA-256.
 func DeriveKey(secret string) []byte {

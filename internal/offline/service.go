@@ -159,6 +159,14 @@ func (s *Service) SubmitSingleLink(ctx context.Context, downloadURL, name, idemp
 	// Wake poller immediately for high-speed tracking
 	s.WakePoller()
 
+	if initStatus == "COMPLETE" {
+		go func(accID int64) {
+			bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			_ = s.accountService.SyncAccountStorage(bgCtx, accID)
+		}(usedAccount.ID)
+	}
+
 	res := &TaskResult{
 		ID:        taskID,
 		URL:       downloadURL,

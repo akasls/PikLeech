@@ -87,6 +87,13 @@ func main() {
 		}
 	}()
 
+	// Initial sync of account storage on boot
+	go func() {
+		bgCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		accSvc.SyncAllAccountsStorage(bgCtx)
+	}()
+
 	server := api.NewServer(
 		accSvc,
 		fileSvc,

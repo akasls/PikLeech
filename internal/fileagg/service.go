@@ -57,9 +57,6 @@ func (s *Service) ListFiles(ctx context.Context, parentVirtualID string, userID 
 
 	result := make([]VirtualFile, 0)
 	for _, f := range resp.Files {
-		if strings.EqualFold(strings.TrimSpace(f.Name), "My Pack") {
-			continue
-		}
 		vf := s.convertToFile(f, acc.ID, acc.Name, userID)
 		result = append(result, vf)
 	}
@@ -120,9 +117,6 @@ func (s *Service) listUnifiedRoot(ctx context.Context, userID int64, username, u
 					userFilesResp, err := client.ListFiles(ctx, userFolderID, "", 200)
 					if err == nil {
 						for _, f := range userFilesResp.Files {
-							if strings.EqualFold(strings.TrimSpace(f.Name), "My Pack") {
-								continue
-							}
 							vf := s.convertToFile(f, a.ID, a.Name, userID)
 							converted = append(converted, vf)
 						}
@@ -154,20 +148,14 @@ func (s *Service) listUnifiedRoot(ctx context.Context, userID int64, username, u
 					adminFilesResp, err := client.ListFiles(ctx, adminFolderID, "", 200)
 					if err == nil {
 						for _, f := range adminFilesResp.Files {
-							if strings.EqualFold(strings.TrimSpace(f.Name), "My Pack") {
-								continue
-							}
 							vf := s.convertToFile(f, a.ID, a.Name, userID)
 							converted = append(converted, vf)
 						}
 					}
 				}
 
-				// Also include legacy root items that do NOT start with "User_" and are not "My Pack"
+				// Also include items that do NOT start with "User_" (including My Pack and root downloads)
 				for _, f := range resp.Files {
-					if strings.EqualFold(strings.TrimSpace(f.Name), "My Pack") {
-						continue
-					}
 					// Isolate: hide any tenant User_* folders from admin view
 					if strings.HasPrefix(f.Name, "User_") {
 						continue

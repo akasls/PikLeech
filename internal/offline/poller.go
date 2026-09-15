@@ -130,6 +130,13 @@ func (s *Service) pollSingleAccountTasks(ctx context.Context, accID int64, tasks
 			`, info.fileID, now, now, t.id)
 			log.Printf("[POLLER] Offline task %s COMPLETED!", t.id)
 
+			// Automatically sync storage usage for the account that completed this download
+			go func(accID int64) {
+				bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				_ = s.accountService.SyncAccountStorage(bgCtx, accID)
+			}(t.accountID)
+
 		case "PHASE_TYPE_ERROR":
 			errMsg := info.msg
 			if errMsg == "" {
