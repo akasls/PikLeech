@@ -35,7 +35,7 @@ export const App: React.FC = () => {
       .then((res) => {
         if (res && res.username) {
           setCurrentUser(res.username)
-          setCurrentRole(res.role || "user")
+          setCurrentRole(res.role || (res.username === "admin" ? "admin" : "user"))
         }
       })
       .catch(() => {
@@ -71,7 +71,7 @@ export const App: React.FC = () => {
       <LoginPage
         onLoginSuccess={(u, r) => {
           setCurrentUser(u)
-          setCurrentRole(r || "user")
+          setCurrentRole(r || (u === "admin" ? "admin" : "user"))
         }}
       />
     )

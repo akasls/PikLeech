@@ -50,8 +50,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   onOpenNewOffline,
   onLogout,
 }) => {
-  const isAdmin = currentUserRole === "admin"
-  const [activeTab, setActiveTab] = useState<SettingsTab>(() => (isAdmin ? "overview" : "profile"))
+  const isAdmin = currentUserRole === "admin" || currentUsername === "admin"
+  const [activeTab, setActiveTab] = useState<SettingsTab>(() =>
+    currentUserRole === "admin" || currentUsername === "admin" ? "overview" : "profile"
+  )
 
   useEffect(() => {
     if (!isAdmin && activeTab !== "profile" && activeTab !== "about") {

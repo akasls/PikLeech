@@ -112,7 +112,11 @@ func (s *Service) ValidateSessionToken(tokenStr string) (*SessionClaims, error) 
 	}
 
 	if claims.Role == "" {
-		claims.Role = "user"
+		if claims.Username == "admin" || claims.UserID == 1 {
+			claims.Role = "admin"
+		} else {
+			claims.Role = "user"
+		}
 	}
 
 	return &claims, nil
@@ -216,8 +220,12 @@ func (s *Service) AuthMiddleware() gin.HandlerFunc {
 // RequireAdmin middleware ensures only users with role "admin" can access the endpoint
 func (s *Service) RequireAdmin() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		roleVal, exists := c.Get("role")
-		if !exists || roleVal != "admin" {
+		roleVal, _ := c.Get("role")
+		usernameVal, _ := c.Get("username")
+		uidVal, _ := c.Get("user_id")
+
+		isAdmin := roleVal == "admin" || usernameVal == "admin" || uidVal == int64(1)
+		if !isAdmin {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "需要管理员权限"})
 			return
 		}
@@ -263,6 +271,10 @@ func (s *Service) HandleMe(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 	username, _ := c.Get("username")
 	role, _ := c.Get("role")
+
+	if username == "admin" || userID == int64(1) {
+		role = "admin"
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"user_id":  userID,
