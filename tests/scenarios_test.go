@@ -93,7 +93,7 @@ func TestScenario1_AutoFailoverOnQuotaExhausted(t *testing.T) {
 		return nil, errors.New("unknown client")
 	})
 
-	res, err := offSvc.SubmitSingleLink(ctx, "magnet:?xt=urn:btih:hashscenario1", "Inception.mkv", "")
+	res, err := offSvc.SubmitSingleLink(ctx, "magnet:?xt=urn:btih:hashscenario1", "Inception.mkv", "", 1, "admin")
 	if err != nil {
 		t.Fatalf("SubmitSingleLink failed: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestScenario2_AllAccountsQuotaExhausted(t *testing.T) {
 		return nil, pikpak.ErrQuotaExceeded
 	})
 
-	res, err := offSvc.SubmitSingleLink(ctx, "magnet:?xt=urn:btih:hashscenario2", "Film.mp4", "")
+	res, err := offSvc.SubmitSingleLink(ctx, "magnet:?xt=urn:btih:hashscenario2", "Film.mp4", "", 1, "admin")
 	if err == nil || !errors.Is(err, scheduler.ErrAllAccountsQuotaExhausted) {
 		t.Fatalf("Expected ErrAllAccountsQuotaExhausted, got: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestScenario3_ProxyFailureIsolation(t *testing.T) {
 		return &pikpak.OfflineTask{ID: "task_b_ok"}, nil
 	})
 
-	res, err := offSvc.SubmitSingleLink(ctx, "magnet:?xt=urn:btih:hashscenario3", "Film.mp4", "")
+	res, err := offSvc.SubmitSingleLink(ctx, "magnet:?xt=urn:btih:hashscenario3", "Film.mp4", "", 1, "admin")
 	if err != nil {
 		t.Fatalf("SubmitSingleLink failed: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestScenario4_BatchDeleteAcrossAccounts(t *testing.T) {
 	// Execute batch delete
 	res, err := fileSvc.BatchDelete(ctx, fileagg.BatchDeleteReq{
 		VirtualIDs: []string{vID_A, vID_B},
-	})
+	}, 1, "admin")
 	if err != nil {
 		t.Fatalf("BatchDelete failed: %v", err)
 	}

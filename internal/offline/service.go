@@ -1,4 +1,4 @@
-﻿package offline
+package offline
 
 import (
 	"context"
@@ -28,15 +28,18 @@ type Task struct {
 	Status       string     `json:"status"` // PENDING, RUNNING, COMPLETE, ERROR, CANCELLED
 	Progress     int        `json:"progress"`
 	ErrorMessage string     `json:"error_message,omitempty"`
+	UserID       int64      `json:"user_id"`
 	CreatedAt    time.Time  `json:"created_at"`
 	UpdatedAt    time.Time  `json:"updated_at"`
 	CompletedAt  *time.Time `json:"completed_at,omitempty"`
 }
 
 type SubmitTaskReq struct {
-	URL  string   `json:"url"`
-	URLs []string `json:"urls"`
-	Name string   `json:"name"`
+	URL        string   `json:"url"`
+	URLs       []string `json:"urls"`
+	Name       string   `json:"name"`
+	FileSize   int64    `json:"file_size"`    // in bytes
+	FileSizeGB float64  `json:"file_size_gb"` // in gigabytes
 }
 
 type TaskResult struct {
@@ -69,11 +72,16 @@ func NewService(db *sql.DB, accSvc *account.Service, sched *scheduler.AccountSch
 	}
 }
 
-// SubmitSingleLink submits a single download link with idempotency check
-func (s *Service) SubmitSingleLink(ctx context.Context, downloadURL, name, idempotencyKey string) (*TaskResult, error) {
+// SubmitSingleLink submits a single download link with idempotency check and user isolation
+func (s *Service) SubmitSingleLink(ctx context.Context, downloadURL, name, idempotencyKey string, userID int64, username string, requiredBytes ...int64) (*TaskResult, error) {
 	downloadURL = strings.TrimSpace(downloadURL)
 	if downloadURL == "" {
 		return nil, errors.New("download URL is empty")
+	}
+
+	var reqBytes int64
+	if len(requiredBytes) > 0 {
+		reqBytes = requiredBytes[0]
 	}
 
 	// 1. Check Idempotency
@@ -89,7 +97,7 @@ func (s *Service) SubmitSingleLink(ctx context.Context, downloadURL, name, idemp
 	}
 
 	taskID := uuid.New().String()
-	pikpakTask, usedAccount, err := s.scheduler.SubmitOfflineTask(ctx, downloadURL, name)
+	pikpakTask, usedAccount, err := s.scheduler.SubmitOfflineTask(ctx, downloadURL, name, username, reqBytes)
 	if err != nil {
 		return &TaskResult{
 			ID:      taskID,
@@ -108,14 +116,18 @@ func (s *Service) SubmitSingleLink(ctx context.Context, downloadURL, name, idemp
 		taskName = pikpakTask.FileName
 	}
 
+	if userID <= 0 {
+		userID = 1
+	}
+
 	now := time.Now().UTC()
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO offline_tasks (
 			id, source_url, file_name, account_id, pikpak_task_id, pikpak_file_id,
-			status, progress, error_message, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			status, progress, error_message, user_id, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, taskID, downloadURL, taskName, usedAccount.ID, pikpakTask.ID, pikpakTask.FileID,
-		"RUNNING", pikpakTask.Progress, "", now, now)
+		"RUNNING", pikpakTask.Progress, "", userID, now, now)
 	if err != nil {
 		log.Printf("[OFFLINE] Failed to save offline task %s: %v", taskID, err)
 	}
@@ -144,7 +156,7 @@ type ResultPayload struct {
 }
 
 // SubmitBatchLinks submits multiple download links line by line
-func (s *Service) SubmitBatchLinks(ctx context.Context, req SubmitTaskReq, idempotencyKey string) (*BatchSubmitResponse, error) {
+func (s *Service) SubmitBatchLinks(ctx context.Context, req SubmitTaskReq, idempotencyKey string, userID int64, username string) (*BatchSubmitResponse, error) {
 	var urls []string
 	if req.URL != "" {
 		for _, line := range strings.Split(req.URL, "\n") {
@@ -165,6 +177,11 @@ func (s *Service) SubmitBatchLinks(ctx context.Context, req SubmitTaskReq, idemp
 		return nil, errors.New("no valid download URLs provided")
 	}
 
+	reqBytes := req.FileSize
+	if reqBytes == 0 && req.FileSizeGB > 0 {
+		reqBytes = int64(req.FileSizeGB * 1024 * 1024 * 1024)
+	}
+
 	resp := &BatchSubmitResponse{
 		Success: true,
 		Results: make([]TaskResult, 0, len(urls)),
@@ -176,7 +193,7 @@ func (s *Service) SubmitBatchLinks(ctx context.Context, req SubmitTaskReq, idemp
 			subKey = fmt.Sprintf("%s:%d", idempotencyKey, i)
 		}
 
-		res, err := s.SubmitSingleLink(ctx, u, req.Name, subKey)
+		res, err := s.SubmitSingleLink(ctx, u, req.Name, subKey, userID, username, reqBytes)
 		if err != nil {
 			resp.Results = append(resp.Results, TaskResult{
 				URL:     u,
@@ -197,7 +214,7 @@ func (s *Service) GetTask(ctx context.Context, id string) (*Task, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT t.id, t.source_url, t.file_name, t.account_id, a.name,
 		       t.pikpak_task_id, t.pikpak_file_id, t.status, t.progress,
-		       t.error_message, t.created_at, t.updated_at, t.completed_at
+		       t.error_message, COALESCE(t.user_id, 1), t.created_at, t.updated_at, t.completed_at
 		FROM offline_tasks t
 		LEFT JOIN pikpak_accounts a ON t.account_id = a.id
 		WHERE t.id = ?
@@ -206,26 +223,36 @@ func (s *Service) GetTask(ctx context.Context, id string) (*Task, error) {
 	return s.scanTask(row)
 }
 
-// ListTasks lists tasks with optional status filter and pagination
-func (s *Service) ListTasks(ctx context.Context, status string, limit, offset int) ([]*Task, int, error) {
+// ListTasks lists tasks with optional status filter, user filtering, and pagination
+func (s *Service) ListTasks(ctx context.Context, status string, userID int64, limit, offset int) ([]*Task, int, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 
-	countQuery := "SELECT COUNT(*) FROM offline_tasks"
+	countQuery := "SELECT COUNT(*) FROM offline_tasks t"
 	query := `
 		SELECT t.id, t.source_url, t.file_name, t.account_id, COALESCE(a.name, 'Unknown'),
 		       t.pikpak_task_id, t.pikpak_file_id, t.status, t.progress,
-		       t.error_message, t.created_at, t.updated_at, t.completed_at
+		       t.error_message, COALESCE(t.user_id, 1), t.created_at, t.updated_at, t.completed_at
 		FROM offline_tasks t
 		LEFT JOIN pikpak_accounts a ON t.account_id = a.id
 	`
 
+	var conditions []string
 	var args []interface{}
 	if status != "" {
-		countQuery += " WHERE status = ?"
-		query += " WHERE t.status = ?"
+		conditions = append(conditions, "t.status = ?")
 		args = append(args, status)
+	}
+	if userID > 0 {
+		conditions = append(conditions, "t.user_id = ?")
+		args = append(args, userID)
+	}
+
+	if len(conditions) > 0 {
+		whereClause := " WHERE " + strings.Join(conditions, " AND ")
+		countQuery += whereClause
+		query += whereClause
 	}
 
 	var total int
@@ -265,7 +292,7 @@ func (s *Service) scanTask(scanner interface {
 	err := scanner.Scan(
 		&t.ID, &t.SourceURL, &fileName, &t.AccountID, &accName,
 		&ptID, &pfID, &t.Status, &t.Progress,
-		&errMsg, &t.CreatedAt, &t.UpdatedAt, &completedAt,
+		&errMsg, &t.UserID, &t.CreatedAt, &t.UpdatedAt, &completedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -321,11 +348,16 @@ func (s *Service) CancelTask(ctx context.Context, id string) error {
 }
 
 // RetryTask resubmits a failed task
-func (s *Service) RetryTask(ctx context.Context, id string) (*TaskResult, error) {
+func (s *Service) RetryTask(ctx context.Context, id string, userID int64, username string) (*TaskResult, error) {
 	task, err := s.GetTask(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 
-	return s.SubmitSingleLink(ctx, task.SourceURL, task.FileName, "")
+	uid := userID
+	if uid <= 0 {
+		uid = task.UserID
+	}
+
+	return s.SubmitSingleLink(ctx, task.SourceURL, task.FileName, "", uid, username)
 }

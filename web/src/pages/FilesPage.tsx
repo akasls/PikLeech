@@ -1,19 +1,19 @@
-﻿import React, { useState, useEffect } from "react"
+import React, { useState, useEffect } from "react"
 import {
   Folder,
-  FileVideo,
   FileText,
   File,
-  Search,
-  LayoutGrid,
-  List,
   Trash2,
-  RefreshCw,
   ChevronRight,
   Home,
   PlayCircle,
-  AlertCircle,
   Loader2,
+  Plus,
+  Download,
+  Edit2,
+  X,
+  Eye,
+  Check,
 } from "lucide-react"
 import { api, VirtualFile } from "../lib/api"
 import { formatBytes, formatDate } from "../lib/utils"
@@ -24,27 +24,51 @@ interface BreadcrumbItem {
   name: string
 }
 
-export const FilesPage: React.FC = () => {
+interface FilesPageProps {
+  onOpenNewOffline?: () => void
+  searchKeyword?: string
+  onClearSearch?: () => void
+}
+
+interface ContextMenuState {
+  visible: boolean
+  x: number
+  y: number
+  file: VirtualFile | null
+}
+
+export const FilesPage: React.FC<FilesPageProps> = ({
+  onOpenNewOffline,
+  searchKeyword = "",
+  onClearSearch,
+}) => {
   const [files, setFiles] = useState<VirtualFile[]>([])
   const [loading, setLoading] = useState(true)
   const [breadcrumbs, setBreadcrumbs] = useState<BreadcrumbItem[]>([
     { virtualID: "root", name: "全部文件" },
   ])
-  const [viewMode, setViewMode] = useState<"list" | "grid">("list")
-  const [searchKeyword, setSearchKeyword] = useState("")
-  const [isSearching, setIsSearching] = useState(false)
-  const [sortBy, setSortBy] = useState<"name" | "size" | "modified">("name")
-  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc")
   const [selectedIDs, setSelectedIDs] = useState<Set<string>>(new Set())
+  const [isDeleting, setIsDeleting] = useState(false)
+
+  // Context Menu state
+  const [contextMenu, setContextMenu] = useState<ContextMenuState>({
+    visible: false,
+    x: 0,
+    y: 0,
+    file: null,
+  })
+
+  // Rename modal state
+  const [renamingFile, setRenamingFile] = useState<VirtualFile | null>(null)
+  const [newNameInput, setNewNameInput] = useState("")
+  const [renameSubmitting, setRenameSubmitting] = useState(false)
+  const [renameError, setRenameError] = useState("")
 
   // Video playback modal
   const [activeVideo, setActiveVideo] = useState<{ virtualID: string; name: string } | null>(null)
 
-  // Batch delete modal
-  const [showDeleteModal, setShowDeleteModal] = useState(false)
-  const [isDeleting, setIsDeleting] = useState(false)
-  const [permanentDelete, setPermanentDelete] = useState(false)
-  const [deleteSummary, setDeleteSummary] = useState<any>(null)
+  // Image preview modal
+  const [previewImage, setPreviewImage] = useState<{ url: string; name: string } | null>(null)
 
   const currentFolder = breadcrumbs[breadcrumbs.length - 1]
 
@@ -52,56 +76,67 @@ export const FilesPage: React.FC = () => {
     setLoading(true)
     setSelectedIDs(new Set())
     try {
-      const data = await api.listFiles(folderID, sortBy, sortOrder)
+      const data = await api.listFiles(folderID, "name", "asc")
       setFiles(data || [])
     } catch (err) {
-      console.error(err)
+      console.error("Failed to load files:", err)
     } finally {
       setLoading(false)
     }
   }
 
+  // Effect for folder navigation or search
   useEffect(() => {
-    if (!isSearching) {
+    if (searchKeyword && searchKeyword.trim()) {
+      setLoading(true)
+      setSelectedIDs(new Set())
+      api
+        .searchFiles(searchKeyword.trim())
+        .then((res) => setFiles(res || []))
+        .catch((err) => console.error("Search failed:", err))
+        .finally(() => setLoading(false))
+    } else {
       loadFiles(currentFolder.virtualID)
     }
-  }, [currentFolder.virtualID, sortBy, sortOrder])
+  }, [currentFolder.virtualID, searchKeyword])
 
-  const handleSearch = async (e: React.FormEvent) => {
+  // Context menu outside click & scroll listener
+  useEffect(() => {
+    const handleCloseMenu = () => {
+      if (contextMenu.visible) {
+        setContextMenu({ visible: false, x: 0, y: 0, file: null })
+      }
+    }
+    window.addEventListener("click", handleCloseMenu)
+    window.addEventListener("scroll", handleCloseMenu, true)
+    return () => {
+      window.removeEventListener("click", handleCloseMenu)
+      window.removeEventListener("scroll", handleCloseMenu, true)
+    }
+  }, [contextMenu.visible])
+
+  const handleContextMenu = (e: React.MouseEvent, file: VirtualFile) => {
     e.preventDefault()
-    if (!searchKeyword.trim()) {
-      setIsSearching(false)
-      loadFiles(currentFolder.virtualID)
-      return
-    }
-
-    setLoading(true)
-    setIsSearching(true)
-    try {
-      const results = await api.searchFiles(searchKeyword)
-      setFiles(results || [])
-    } catch (err) {
-      console.error(err)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const clearSearch = () => {
-    setSearchKeyword("")
-    setIsSearching(false)
-    loadFiles(currentFolder.virtualID)
+    e.stopPropagation()
+    const menuWidth = 160
+    const menuHeight = 190
+    const x = Math.min(e.clientX, window.innerWidth - menuWidth - 12)
+    const y = Math.min(e.clientY, window.innerHeight - menuHeight - 12)
+    setContextMenu({
+      visible: true,
+      x,
+      y,
+      file,
+    })
   }
 
   const navigateToFolder = (virtualID: string, name: string) => {
-    setIsSearching(false)
-    setSearchKeyword("")
+    onClearSearch?.()
     setBreadcrumbs((prev) => [...prev, { virtualID, name }])
   }
 
   const navigateToBreadcrumb = (index: number) => {
-    setIsSearching(false)
-    setSearchKeyword("")
+    onClearSearch?.()
     setBreadcrumbs((prev) => prev.slice(0, index + 1))
   }
 
@@ -115,297 +150,272 @@ export const FilesPage: React.FC = () => {
     setSelectedIDs(next)
   }
 
-  const toggleSelectAll = () => {
-    if (selectedIDs.size === files.length) {
-      setSelectedIDs(new Set())
-    } else {
-      setSelectedIDs(new Set(files.map((f) => f.virtual_id)))
+  // Delete directly without modal or confirmation prompt
+  const handleDeleteSingle = async (virtualID: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation()
+    try {
+      await api.batchDelete([virtualID], true)
+      setFiles((prev) => prev.filter((f) => f.virtual_id !== virtualID))
+      setSelectedIDs((prev) => {
+        const next = new Set(prev)
+        next.delete(virtualID)
+        return next
+      })
+    } catch (err: any) {
+      console.error("Direct delete failed:", err)
     }
   }
 
+  // Batch delete directly without modal or confirmation prompt
   const handleBatchDelete = async () => {
     if (selectedIDs.size === 0) return
     setIsDeleting(true)
-    setDeleteSummary(null)
-
+    const ids = Array.from(selectedIDs)
     try {
-      const ids = Array.from(selectedIDs)
-      const res = await api.batchDelete(ids, permanentDelete)
-      setDeleteSummary(res)
-      loadFiles(currentFolder.virtualID)
+      await api.batchDelete(ids, true)
+      setFiles((prev) => prev.filter((f) => !selectedIDs.has(f.virtual_id)))
       setSelectedIDs(new Set())
     } catch (err: any) {
-      alert("批量删除失败: " + err.message)
+      console.error("Batch delete failed:", err)
     } finally {
       setIsDeleting(false)
     }
   }
 
+  // Preview action
+  const handlePreview = async (file: VirtualFile) => {
+    setContextMenu({ visible: false, x: 0, y: 0, file: null })
+    if (file.is_folder) {
+      navigateToFolder(file.virtual_id, file.name)
+      return
+    }
+    if (file.is_video) {
+      setActiveVideo({ virtualID: file.virtual_id, name: file.name })
+      return
+    }
+    // Image or other
+    try {
+      const info = await api.getPlaybackInfo(file.virtual_id)
+      const url = info.direct_url || info.proxy_url
+      if (file.mime_type.startsWith("image/") || file.thumbnail_link) {
+        setPreviewImage({ url: url || file.thumbnail_link, name: file.name })
+      } else if (url) {
+        window.open(url, "_blank")
+      }
+    } catch {
+      if (file.thumbnail_link) {
+        setPreviewImage({ url: file.thumbnail_link, name: file.name })
+      }
+    }
+  }
+
+  // Direct download action
+  const handleDownloadFile = async (file: VirtualFile) => {
+    setContextMenu({ visible: false, x: 0, y: 0, file: null })
+    try {
+      const info = await api.getPlaybackInfo(file.virtual_id)
+      const downloadUrl = info.direct_url || info.proxy_url
+      if (downloadUrl) {
+        const a = document.createElement("a")
+        a.href = downloadUrl
+        a.download = file.name
+        a.target = "_blank"
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+      } else {
+        alert("无法获取下载链接")
+      }
+    } catch (err: any) {
+      alert("下载失败: " + (err.message || "未能解析下载直链"))
+    }
+  }
+
+  // Start rename
+  const handleStartRename = (file: VirtualFile) => {
+    setContextMenu({ visible: false, x: 0, y: 0, file: null })
+    setRenamingFile(file)
+    setNewNameInput(file.name)
+    setRenameError("")
+  }
+
+  // Confirm rename
+  const handleConfirmRename = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!renamingFile || !newNameInput.trim()) return
+    setRenameSubmitting(true)
+    setRenameError("")
+    try {
+      await api.renameFile(renamingFile.virtual_id, newNameInput.trim())
+      setFiles((prev) =>
+        prev.map((f) =>
+          f.virtual_id === renamingFile.virtual_id ? { ...f, name: newNameInput.trim() } : f
+        )
+      )
+      setRenamingFile(null)
+    } catch (err: any) {
+      setRenameError(err.message || "重命名失败")
+    } finally {
+      setRenameSubmitting(false)
+    }
+  }
+
   return (
-    <div className="space-y-4">
-      {/* Action Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-4">
-        {/* Breadcrumb path */}
-        <div className="flex items-center gap-1.5 overflow-x-auto py-1 text-sm font-medium">
-          {breadcrumbs.map((b, idx) => (
-            <React.Fragment key={b.virtualID}>
-              {idx > 0 && <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />}
-              <button
-                onClick={() => navigateToBreadcrumb(idx)}
-                className={`flex items-center gap-1 whitespace-nowrap rounded-lg px-2 py-1 transition-colors ${
-                  idx === breadcrumbs.length - 1
-                    ? "font-semibold text-foreground bg-secondary/80"
-                    : "text-muted-foreground hover:text-foreground hover:bg-secondary/40"
-                }`}
-              >
-                {idx === 0 ? <Home className="h-3.5 w-3.5" /> : null}
-                <span>{b.name}</span>
-              </button>
-            </React.Fragment>
-          ))}
-          {isSearching && (
-            <span className="text-xs text-primary font-normal bg-primary/10 px-2 py-0.5 rounded-full ml-2">
-              搜索结果: "{searchKeyword}" (
-              <button onClick={clearSearch} className="underline">
-                清除
-              </button>
-              )
-            </span>
-          )}
-        </div>
-
-        {/* Right side controls: Search, Sort, View mode */}
-        <div className="flex items-center gap-2">
-          {/* Search bar */}
-          <form onSubmit={handleSearch} className="relative">
-            <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-            <input
-              type="text"
-              placeholder="搜索跨账号文件..."
-              value={searchKeyword}
-              onChange={(e) => setSearchKeyword(e.target.value)}
-              className="h-9 w-44 sm:w-60 rounded-xl border bg-background pl-9 pr-3 text-xs focus:outline-none focus:ring-2 focus:ring-primary"
-            />
-          </form>
-
-          {/* Sort dropdown */}
-          <select
-            value={`${sortBy}-${sortOrder}`}
-            onChange={(e) => {
-              const [f, o] = e.target.value.split("-")
-              setSortBy(f as any)
-              setSortOrder(o as any)
-            }}
-            className="h-9 rounded-xl border bg-card px-2.5 text-xs text-foreground focus:outline-none"
-          >
-            <option value="name-asc">按名称 (A-Z)</option>
-            <option value="name-desc">按名称 (Z-A)</option>
-            <option value="size-desc">按大小 (大到小)</option>
-            <option value="size-asc">按大小 (小到大)</option>
-            <option value="modified-desc">按修改时间 (新到旧)</option>
-            <option value="modified-asc">按修改时间 (旧到新)</option>
-          </select>
-
-          {/* View toggle */}
-          <div className="flex rounded-xl border bg-secondary p-0.5">
-            <button
-              onClick={() => setViewMode("list")}
-              className={`p-1.5 rounded-lg ${viewMode === "list" ? "bg-card shadow-sm" : "text-muted-foreground"}`}
-              title="列表视图"
-            >
-              <List className="h-4 w-4" />
-            </button>
-            <button
-              onClick={() => setViewMode("grid")}
-              className={`p-1.5 rounded-lg ${viewMode === "grid" ? "bg-card shadow-sm" : "text-muted-foreground"}`}
-              title="网格视图"
-            >
-              <LayoutGrid className="h-4 w-4" />
-            </button>
+    <div className="space-y-4 relative min-h-[calc(100vh-8rem)]">
+      {/* Breadcrumb Path & Search Filter Tag (Minimal Header) */}
+      {(breadcrumbs.length > 1 || (searchKeyword && searchKeyword.trim())) && (
+        <div className="flex items-center justify-between border-b pb-2.5">
+          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5 text-xs sm:text-sm font-medium">
+            {breadcrumbs.map((b, idx) => (
+              <React.Fragment key={b.virtualID}>
+                {idx > 0 && <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />}
+                <button
+                  onClick={() => navigateToBreadcrumb(idx)}
+                  className={`flex items-center gap-1 whitespace-nowrap rounded-lg px-2 py-1 transition-colors ${
+                    idx === breadcrumbs.length - 1 && !searchKeyword
+                      ? "font-semibold text-foreground bg-secondary/80"
+                      : "text-muted-foreground hover:text-foreground hover:bg-secondary/40"
+                  }`}
+                >
+                  {idx === 0 ? <Home className="h-3.5 w-3.5" /> : null}
+                  <span>{b.name}</span>
+                </button>
+              </React.Fragment>
+            ))}
           </div>
 
-          <button
-            onClick={() => loadFiles(currentFolder.virtualID)}
-            className="p-2 rounded-xl border hover:bg-secondary text-muted-foreground hover:text-foreground"
-            title="刷新"
-          >
-            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-          </button>
+          {searchKeyword && searchKeyword.trim() && (
+            <div className="flex items-center gap-1.5 bg-primary/10 text-primary text-xs px-2.5 py-1 rounded-full shrink-0">
+              <span className="truncate max-w-[150px] sm:max-w-xs">搜索: "{searchKeyword}"</span>
+              <button
+                onClick={onClearSearch}
+                className="hover:bg-primary/20 rounded p-0.5"
+                title="清除搜索"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          )}
         </div>
-      </div>
+      )}
 
       {/* Batch Actions Banner */}
       {selectedIDs.size > 0 && (
-        <div className="flex items-center justify-between rounded-xl bg-primary/10 border border-primary/20 px-4 py-2.5 text-sm">
-          <span className="font-medium text-primary">已选择 {selectedIDs.size} 个项目 (支持跨账号)</span>
+        <div className="flex items-center justify-between rounded-xl bg-primary/10 border border-primary/20 px-4 py-2 text-sm animate-in fade-in">
+          <span className="font-medium text-primary text-xs sm:text-sm">
+            已选择 {selectedIDs.size} 个项目 (直接删除，不进回收站)
+          </span>
           <div className="flex items-center gap-2">
             <button
               onClick={() => setSelectedIDs(new Set())}
-              className="px-3 py-1 rounded-lg hover:bg-primary/20 text-xs text-muted-foreground"
+              className="px-2.5 py-1 rounded-lg hover:bg-primary/20 text-xs text-muted-foreground"
             >
-              取消全选
+              取消
             </button>
             <button
-              onClick={() => {
-                setDeleteSummary(null)
-                setShowDeleteModal(true)
-              }}
-              className="flex items-center gap-1.5 rounded-lg bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground shadow hover:bg-destructive/90"
+              onClick={handleBatchDelete}
+              disabled={isDeleting}
+              className="flex items-center gap-1.5 rounded-lg bg-destructive px-3 py-1 text-xs font-medium text-destructive-foreground shadow hover:bg-destructive/90 disabled:opacity-50"
             >
-              <Trash2 className="h-3.5 w-3.5" />
-              批量删除
+              {isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+              直接删除
             </button>
           </div>
         </div>
       )}
 
-      {/* Content Area */}
+      {/* Grid View with Video / Image Covers */}
       {loading ? (
-        <div className="flex flex-col items-center justify-center py-20 text-muted-foreground gap-3">
+        <div className="flex flex-col items-center justify-center py-28 text-muted-foreground gap-3">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          <span className="text-sm">正在聚合跨账号文件列表...</span>
+          <span className="text-xs">加载网盘内容中...</span>
         </div>
       ) : files.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-24 text-muted-foreground">
-          <Folder className="h-16 w-16 stroke-1 text-muted-foreground/40 mb-3" />
+        <div className="flex flex-col items-center justify-center py-28 text-muted-foreground">
+          <Folder className="h-16 w-16 stroke-1 text-muted-foreground/30 mb-3" />
           <p className="text-base font-semibold text-foreground">暂无文件</p>
           <p className="text-xs text-muted-foreground mt-1">
-            当前目录为空，或者还没有账号同步文件。通过右上角新建离线下载开始！
+            当前目录为空。点击右下角按钮即可新建离线下载任务！
           </p>
         </div>
-      ) : viewMode === "list" ? (
-        /* List View */
-        <div className="rounded-2xl border bg-card overflow-hidden shadow-sm">
-          <table className="w-full text-left text-sm">
-            <thead className="border-b bg-secondary/40 text-xs font-semibold text-muted-foreground">
-              <tr>
-                <th className="w-10 px-4 py-3">
-                  <input
-                    type="checkbox"
-                    checked={selectedIDs.size === files.length && files.length > 0}
-                    onChange={toggleSelectAll}
-                    className="rounded border-gray-300"
-                  />
-                </th>
-                <th className="px-4 py-3">文件名</th>
-                <th className="px-4 py-3 w-32">大小</th>
-                <th className="px-4 py-3 w-36">来源账号</th>
-                <th className="px-4 py-3 w-40">修改时间</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {files.map((file) => {
-                const isSelected = selectedIDs.has(file.virtual_id)
-                return (
-                  <tr
-                    key={file.virtual_id}
-                    className={`hover:bg-secondary/30 transition-colors ${isSelected ? "bg-primary/5" : ""}`}
-                  >
-                    <td className="px-4 py-3">
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => toggleSelect(file.virtual_id)}
-                        className="rounded border-gray-300"
-                      />
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-3">
-                        {file.is_folder ? (
-                          <div
-                            onClick={() => navigateToFolder(file.virtual_id, file.name)}
-                            className="cursor-pointer text-amber-500 hover:text-amber-600"
-                          >
-                            <Folder className="h-5 w-5 fill-amber-500/20" />
-                          </div>
-                        ) : file.is_video ? (
-                          <div
-                            onClick={() => setActiveVideo({ virtualID: file.virtual_id, name: file.name })}
-                            className="cursor-pointer text-primary hover:text-primary/80"
-                            title="点击在线播放"
-                          >
-                            <PlayCircle className="h-5 w-5" />
-                          </div>
-                        ) : (
-                          <div className="text-muted-foreground">
-                            <File className="h-5 w-5" />
-                          </div>
-                        )}
-
-                        <span
-                          onClick={() => {
-                            if (file.is_folder) {
-                              navigateToFolder(file.virtual_id, file.name)
-                            } else if (file.is_video) {
-                              setActiveVideo({ virtualID: file.virtual_id, name: file.name })
-                            }
-                          }}
-                          className={`font-medium truncate max-w-sm md:max-w-md cursor-pointer hover:underline ${
-                            file.is_video ? "text-primary" : ""
-                          }`}
-                          title={file.name}
-                        >
-                          {file.name}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-xs text-muted-foreground font-mono">
-                      {file.is_folder ? "-" : formatBytes(file.size)}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="inline-block rounded-full bg-secondary px-2.5 py-0.5 text-xs text-muted-foreground">
-                        {file.account_name}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-xs text-muted-foreground">
-                      {formatDate(file.modified_time)}
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
       ) : (
-        /* Grid View */
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3.5">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3.5 sm:gap-4">
           {files.map((file) => {
             const isSelected = selectedIDs.has(file.virtual_id)
             return (
               <div
                 key={file.virtual_id}
-                className={`group relative flex flex-col rounded-2xl border bg-card p-3.5 shadow-sm hover:border-primary/50 transition-all ${
+                onContextMenu={(e) => handleContextMenu(e, file)}
+                className={`group relative flex flex-col rounded-2xl border bg-card p-3 shadow-sm hover:border-primary/50 hover:shadow-md transition-all select-none ${
                   isSelected ? "ring-2 ring-primary bg-primary/5" : ""
                 }`}
               >
-                <div className="absolute top-3 left-3 z-10">
+                {/* Select Checkbox */}
+                <div className="absolute top-2.5 left-2.5 z-20">
                   <input
                     type="checkbox"
                     checked={isSelected}
                     onChange={() => toggleSelect(file.virtual_id)}
-                    className="rounded border-gray-300"
+                    className="rounded border-gray-300 h-4 w-4 cursor-pointer accent-primary"
                   />
                 </div>
 
+                {/* Direct Delete Button (Hover) */}
+                <button
+                  onClick={(e) => handleDeleteSingle(file.virtual_id, e)}
+                  className="absolute top-2.5 right-2.5 z-20 p-1.5 rounded-lg bg-background/80 hover:bg-destructive hover:text-destructive-foreground text-muted-foreground opacity-0 group-hover:opacity-100 transition-all shadow-sm"
+                  title="直接删除 (免确认，不进回收站)"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+
+                {/* Media Thumbnail or Icon */}
                 <div
                   onClick={() => {
                     if (file.is_folder) {
                       navigateToFolder(file.virtual_id, file.name)
                     } else if (file.is_video) {
                       setActiveVideo({ virtualID: file.virtual_id, name: file.name })
+                    } else {
+                      handlePreview(file)
                     }
                   }}
-                  className="flex flex-col items-center justify-center h-28 cursor-pointer rounded-xl bg-secondary/30 group-hover:bg-secondary/60 transition-colors"
+                  className="relative flex flex-col items-center justify-center h-32 sm:h-36 w-full cursor-pointer rounded-xl bg-secondary/30 overflow-hidden group-hover:bg-secondary/60 transition-all"
                 >
-                  {file.is_folder ? (
-                    <Folder className="h-12 w-12 text-amber-500 fill-amber-500/20" />
-                  ) : file.is_video ? (
-                    <PlayCircle className="h-12 w-12 text-primary" />
-                  ) : (
-                    <FileText className="h-12 w-12 text-muted-foreground" />
+                  {file.thumbnail_link ? (
+                    <img
+                      src={file.thumbnail_link}
+                      alt={file.name}
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                      loading="lazy"
+                      onError={(e) => {
+                        (e.target as HTMLElement).style.display = "none"
+                      }}
+                    />
+                  ) : null}
+
+                  {/* Fallback Icon */}
+                  {!file.thumbnail_link && (
+                    file.is_folder ? (
+                      <Folder className="h-12 w-12 sm:h-14 sm:w-14 text-amber-500 fill-amber-500/20" />
+                    ) : file.is_video ? (
+                      <PlayCircle className="h-12 w-12 sm:h-14 sm:w-14 text-primary" />
+                    ) : (
+                      <FileText className="h-12 w-12 sm:h-14 sm:w-14 text-muted-foreground" />
+                    )
+                  )}
+
+                  {/* Video Play Overlay */}
+                  {file.is_video && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/25 opacity-85 group-hover:opacity-100 transition-opacity">
+                      <div className="flex h-10 w-10 sm:h-11 sm:w-11 items-center justify-center rounded-full bg-black/60 text-white shadow-lg backdrop-blur-sm group-hover:scale-110 transition-transform">
+                        <PlayCircle className="h-6 w-6 sm:h-7 sm:w-7 text-primary" />
+                      </div>
+                    </div>
                   )}
                 </div>
 
+                {/* File Details */}
                 <div className="mt-2.5 space-y-1">
                   <p
                     onClick={() => {
@@ -413,6 +423,8 @@ export const FilesPage: React.FC = () => {
                         navigateToFolder(file.virtual_id, file.name)
                       } else if (file.is_video) {
                         setActiveVideo({ virtualID: file.virtual_id, name: file.name })
+                      } else {
+                        handlePreview(file)
                       }
                     }}
                     className="font-medium text-xs truncate cursor-pointer hover:underline"
@@ -422,7 +434,7 @@ export const FilesPage: React.FC = () => {
                   </p>
                   <div className="flex items-center justify-between text-[11px] text-muted-foreground">
                     <span>{file.is_folder ? "文件夹" : formatBytes(file.size)}</span>
-                    <span className="truncate max-w-[80px]" title={file.account_name}>
+                    <span className="truncate max-w-[85px] bg-secondary/80 px-1.5 py-0.5 rounded text-[10px]" title={file.account_name}>
                       {file.account_name}
                     </span>
                   </div>
@@ -430,6 +442,137 @@ export const FilesPage: React.FC = () => {
               </div>
             )
           })}
+        </div>
+      )}
+
+      {/* Floating Context Menu */}
+      {contextMenu.visible && contextMenu.file && (
+        <div
+          style={{ top: `${contextMenu.y}px`, left: `${contextMenu.x}px` }}
+          className="fixed z-50 min-w-[155px] rounded-2xl border bg-card/95 backdrop-blur-md shadow-2xl py-1.5 text-xs animate-in fade-in zoom-in-95"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* 预览 */}
+          <button
+            onClick={() => handlePreview(contextMenu.file!)}
+            className="flex w-full items-center gap-2.5 px-3.5 py-2 text-left hover:bg-secondary transition-colors"
+          >
+            <Eye className="h-3.5 w-3.5 text-primary" />
+            <span className="font-medium">预览</span>
+          </button>
+
+          {/* 下载 */}
+          {!contextMenu.file.is_folder && (
+            <button
+              onClick={() => handleDownloadFile(contextMenu.file!)}
+              className="flex w-full items-center gap-2.5 px-3.5 py-2 text-left hover:bg-secondary transition-colors"
+            >
+              <Download className="h-3.5 w-3.5 text-blue-500" />
+              <span className="font-medium">下载</span>
+            </button>
+          )}
+
+          {/* 重命名 */}
+          <button
+            onClick={() => handleStartRename(contextMenu.file!)}
+            className="flex w-full items-center gap-2.5 px-3.5 py-2 text-left hover:bg-secondary transition-colors"
+          >
+            <Edit2 className="h-3.5 w-3.5 text-amber-500" />
+            <span className="font-medium">重命名</span>
+          </button>
+
+          <div className="my-1 border-t" />
+
+          {/* 直接删除 */}
+          <button
+            onClick={() => {
+              const id = contextMenu.file!.virtual_id
+              setContextMenu({ visible: false, x: 0, y: 0, file: null })
+              handleDeleteSingle(id)
+            }}
+            className="flex w-full items-center gap-2.5 px-3.5 py-2 text-left text-destructive hover:bg-destructive/10 transition-colors"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            <span className="font-medium">删除</span>
+          </button>
+        </div>
+      )}
+
+      {/* Rename Modal */}
+      {renamingFile && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="w-full max-w-sm rounded-2xl border bg-card p-5 shadow-2xl animate-in zoom-in-95">
+            <div className="flex items-center justify-between border-b pb-3 mb-4">
+              <h3 className="font-semibold text-sm flex items-center gap-2">
+                <Edit2 className="h-4 w-4 text-primary" />
+                重命名项目
+              </h3>
+              <button
+                onClick={() => setRenamingFile(null)}
+                className="p-1 rounded-lg hover:bg-secondary text-muted-foreground"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmRename} className="space-y-4">
+              <div>
+                <label className="text-xs font-semibold text-muted-foreground">新名称</label>
+                <input
+                  type="text"
+                  required
+                  autoFocus
+                  value={newNameInput}
+                  onChange={(e) => setNewNameInput(e.target.value)}
+                  className="mt-1.5 w-full rounded-xl border bg-background px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+              </div>
+
+              {renameError && <p className="text-xs text-destructive">{renameError}</p>}
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setRenamingFile(null)}
+                  className="rounded-xl border px-3.5 py-1.5 text-xs font-medium hover:bg-secondary"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  disabled={renameSubmitting || !newNameInput.trim()}
+                  className="flex items-center gap-1 rounded-xl bg-primary px-4 py-1.5 text-xs font-medium text-primary-foreground shadow hover:bg-primary/90 disabled:opacity-50"
+                >
+                  {renameSubmitting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  确认
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Image Preview Lightbox Modal */}
+      {previewImage && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-4 animate-in fade-in"
+          onClick={() => setPreviewImage(null)}
+        >
+          <div className="relative max-w-4xl max-h-[90vh] flex flex-col items-center">
+            <button
+              onClick={() => setPreviewImage(null)}
+              className="absolute -top-10 right-0 p-1.5 rounded-full bg-black/60 text-white hover:bg-black/80 transition-colors"
+            >
+              <X className="h-5 w-5" />
+            </button>
+            <img
+              src={previewImage.url}
+              alt={previewImage.name}
+              className="max-h-[82vh] max-w-full rounded-xl object-contain shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            />
+            <p className="text-xs text-white/80 mt-2 text-center truncate max-w-md">{previewImage.name}</p>
+          </div>
         </div>
       )}
 
@@ -442,71 +585,18 @@ export const FilesPage: React.FC = () => {
         />
       )}
 
-      {/* Batch Delete Confirmation Modal */}
-      {showDeleteModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="w-full max-w-md rounded-2xl border bg-card p-6 shadow-2xl">
-            <h3 className="text-lg font-semibold flex items-center gap-2 text-destructive">
-              <Trash2 className="h-5 w-5" />
-              确认批量删除文件
-            </h3>
-            <p className="text-sm text-muted-foreground mt-2">
-              您已选中来自不同 PikPak 账号的{" "}
-              <strong className="text-foreground">{selectedIDs.size}</strong>{" "}
-              个项目。后端将自动按账号分组调用对应 API 执行删除。
-            </p>
-
-            <div className="mt-4 flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="permDelete"
-                checked={permanentDelete}
-                onChange={(e) => setPermanentDelete(e.target.checked)}
-                className="rounded border-gray-300"
-              />
-              <label htmlFor="permDelete" className="text-xs text-foreground cursor-pointer">
-                彻底永久删除 (不勾选则移入 PikPak 回收站)
-              </label>
-            </div>
-
-            {deleteSummary && (
-              <div className="mt-4 rounded-xl border bg-secondary/50 p-3 text-xs space-y-1">
-                <div className="font-semibold text-foreground">
-                  删除结果: 成功 {deleteSummary.success} 个，失败 {deleteSummary.failed} 个
-                </div>
-                {deleteSummary.items
-                  ?.filter((i: any) => !i.success)
-                  .map((item: any, idx: number) => (
-                    <div key={idx} className="text-destructive truncate">
-                      {item.virtual_id}: {item.error}
-                    </div>
-                  ))}
-              </div>
-            )}
-
-            <div className="mt-6 flex items-center justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => setShowDeleteModal(false)}
-                className="rounded-xl border px-4 py-2 text-sm font-medium hover:bg-secondary"
-              >
-                {deleteSummary ? "完成" : "取消"}
-              </button>
-              {!deleteSummary && (
-                <button
-                  type="button"
-                  onClick={handleBatchDelete}
-                  disabled={isDeleting}
-                  className="flex items-center gap-2 rounded-xl bg-destructive px-5 py-2 text-sm font-medium text-destructive-foreground shadow hover:bg-destructive/90 disabled:opacity-50"
-                >
-                  {isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                  确认删除
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
+      {/* Floating Action Button (FAB) for New Offline Task */}
+      {onOpenNewOffline && (
+        <button
+          onClick={onOpenNewOffline}
+          className="fixed right-4 bottom-4 sm:right-6 sm:bottom-6 z-40 flex items-center gap-2 rounded-full bg-primary px-4 py-2.5 sm:px-5 sm:py-3 text-xs sm:text-sm font-semibold text-primary-foreground shadow-xl hover:bg-primary/90 hover:scale-105 active:scale-95 transition-all"
+          title="新建离线下载"
+        >
+          <Plus className="h-4 w-4 sm:h-5 sm:w-5" />
+          <span>新建下载</span>
+        </button>
       )}
     </div>
   )
 }
+

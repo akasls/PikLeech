@@ -1,6 +1,7 @@
-﻿package auth
+package auth
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -32,12 +33,15 @@ func TestAuth_LoginAndSession(t *testing.T) {
 	svc := NewService(database, cfg.AppSecret)
 
 	// Test correct login
-	token, err := svc.Login("testadmin", "password123")
+	token, role, err := svc.Login("testadmin", "password123")
 	if err != nil {
 		t.Fatalf("Login failed: %v", err)
 	}
 	if token == "" {
 		t.Fatalf("Expected non-empty token")
+	}
+	if role != "admin" {
+		t.Errorf("Expected role 'admin', got '%s'", role)
 	}
 
 	// Test validate token
@@ -48,9 +52,12 @@ func TestAuth_LoginAndSession(t *testing.T) {
 	if claims.Username != "testadmin" {
 		t.Errorf("Expected claims username testadmin, got %s", claims.Username)
 	}
+	if claims.Role != "admin" {
+		t.Errorf("Expected claims role admin, got %s", claims.Role)
+	}
 
 	// Test wrong password
-	_, err = svc.Login("testadmin", "wrongpassword")
+	_, _, err = svc.Login("testadmin", "wrongpassword")
 	if err == nil {
 		t.Errorf("Expected login to fail with wrong password")
 	}
@@ -62,14 +69,59 @@ func TestAuth_LoginAndSession(t *testing.T) {
 	}
 
 	// Verify old password fails
-	_, err = svc.Login("testadmin", "password123")
+	_, _, err = svc.Login("testadmin", "password123")
 	if err == nil {
 		t.Errorf("Expected old password to fail")
 	}
 
 	// Verify new password succeeds
-	_, err = svc.Login("testadmin", "newpassword456")
+	_, _, err = svc.Login("testadmin", "newpassword456")
 	if err != nil {
 		t.Fatalf("Login with new password failed: %v", err)
+	}
+
+	// Test user management: Create a normal user
+	ctx := context.Background()
+	newUser, err := svc.CreateUser(ctx, "normaluser", "normalpass123", "user")
+	if err != nil {
+		t.Fatalf("CreateUser failed: %v", err)
+	}
+	if newUser.Username != "normaluser" || newUser.Role != "user" {
+		t.Errorf("Unexpected created user: %+v", newUser)
+	}
+
+	// Test login with normal user
+	uToken, uRole, err := svc.Login("normaluser", "normalpass123")
+	if err != nil {
+		t.Fatalf("Normal user login failed: %v", err)
+	}
+	if uRole != "user" {
+		t.Errorf("Expected normaluser role to be user, got %s", uRole)
+	}
+	uClaims, err := svc.ValidateSessionToken(uToken)
+	if err != nil || uClaims.Role != "user" {
+		t.Errorf("Invalid session claims for normal user: %+v, err: %v", uClaims, err)
+	}
+
+	// Test Admin reset password for normal user
+	err = svc.AdminResetPassword(ctx, newUser.ID, "brandnewpass999")
+	if err != nil {
+		t.Fatalf("AdminResetPassword failed: %v", err)
+	}
+	_, _, err = svc.Login("normaluser", "brandnewpass999")
+	if err != nil {
+		t.Fatalf("Login with reset password failed: %v", err)
+	}
+
+	// Test delete user
+	err = svc.DeleteUser(ctx, claims.UserID, newUser.ID)
+	if err != nil {
+		t.Fatalf("DeleteUser failed: %v", err)
+	}
+
+	// Cannot delete self
+	err = svc.DeleteUser(ctx, claims.UserID, claims.UserID)
+	if err == nil {
+		t.Errorf("Expected error when deleting self")
 	}
 }

@@ -1,4 +1,4 @@
-﻿package pikpak
+package pikpak
 
 import (
 	"bytes"
@@ -54,6 +54,12 @@ func (c *Client) getCaptchaSign(timestamp string) string {
 
 // RefreshCaptchaToken requests a fresh captcha token for an action
 func (c *Client) RefreshCaptchaToken(ctx context.Context, action string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.refreshCaptchaTokenLocked(ctx, action)
+}
+
+func (c *Client) refreshCaptchaTokenLocked(ctx context.Context, action string) error {
 	timestamp := fmt.Sprint(time.Now().UnixMilli())
 	captchaSign := c.getCaptchaSign(timestamp)
 
@@ -74,7 +80,7 @@ func (c *Client) RefreshCaptchaToken(ctx context.Context, action string) error {
 
 	reqBody := CaptchaTokenRequest{
 		Action:       action,
-		CaptchaToken: c.captchaToken,
+		CaptchaToken: "",
 		ClientID:     AndroidClientID,
 		DeviceID:     c.deviceID,
 		Meta:         metas,
@@ -129,68 +135,7 @@ func (c *Client) Login(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.username == "" || c.password == "" {
-		return errors.New("username or password cannot be empty")
-	}
-
-	signinURL := fmt.Sprintf("%s/v1/auth/signin?client_id=%s", ApiUserBaseURL, AndroidClientID)
-	if c.captchaToken == "" {
-		_ = c.RefreshCaptchaToken(ctx, "POST:/v1/auth/signin")
-	}
-
-	reqBody := SigninRequest{
-		ClientID:     AndroidClientID,
-		ClientSecret: AndroidClientSecret,
-		Username:     c.username,
-		Password:     c.password,
-		CaptchaToken: c.captchaToken,
-	}
-
-	jsonBytes, err := json.Marshal(reqBody)
-	if err != nil {
-		return err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, signinURL, bytes.NewReader(jsonBytes))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("User-Agent", c.getUserAgent())
-	req.Header.Set("X-Device-ID", c.deviceID)
-	if c.captchaToken != "" {
-		req.Header.Set("X-Captcha-Token", c.captchaToken)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	httpResp, err := c.httpClient.Do(req)
-	if err != nil {
-		return ClassifyError(err, 0, nil)
-	}
-	defer httpResp.Body.Close()
-
-	respBytes, err := io.ReadAll(httpResp.Body)
-	if err != nil {
-		return err
-	}
-
-	if httpResp.StatusCode >= 400 {
-		return ClassifyError(nil, httpResp.StatusCode, respBytes)
-	}
-
-	var tokenResp TokenResponse
-	if err := json.Unmarshal(respBytes, &tokenResp); err != nil {
-		return err
-	}
-
-	c.accessToken = tokenResp.AccessToken
-	c.refreshToken = tokenResp.RefreshToken
-	c.userID = tokenResp.UserID
-
-	if c.onTokenUpdated != nil {
-		c.onTokenUpdated(c.accessToken, c.refreshToken)
-	}
-
-	return nil
+	return c.loginLocked(ctx)
 }
 
 // RefreshToken exchanges refreshToken for a new accessToken
@@ -271,6 +216,8 @@ func (c *Client) loginLocked(ctx context.Context) error {
 		return errors.New("username or password is required")
 	}
 
+	_ = c.refreshCaptchaTokenLocked(ctx, "POST:/v1/auth/signin")
+
 	signinURL := fmt.Sprintf("%s/v1/auth/signin?client_id=%s", ApiUserBaseURL, AndroidClientID)
 	reqBody := SigninRequest{
 		ClientID:     AndroidClientID,
@@ -291,6 +238,9 @@ func (c *Client) loginLocked(ctx context.Context) error {
 	}
 	req.Header.Set("User-Agent", c.getUserAgent())
 	req.Header.Set("X-Device-ID", c.deviceID)
+	if c.captchaToken != "" {
+		req.Header.Set("X-Captcha-Token", c.captchaToken)
+	}
 	req.Header.Set("Content-Type", "application/json")
 
 	httpResp, err := c.httpClient.Do(req)
@@ -316,10 +266,14 @@ func (c *Client) loginLocked(ctx context.Context) error {
 	c.accessToken = tokenResp.AccessToken
 	c.refreshToken = tokenResp.RefreshToken
 	c.userID = tokenResp.UserID
+	c.captchaToken = ""
 
 	if c.onTokenUpdated != nil {
 		c.onTokenUpdated(c.accessToken, c.refreshToken)
 	}
+
+	// Pre-warm captcha token for drive files API
+	_ = c.refreshCaptchaTokenLocked(ctx, "GET:/drive/v1/files")
 
 	return nil
 }

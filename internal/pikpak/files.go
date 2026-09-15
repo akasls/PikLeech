@@ -1,4 +1,4 @@
-﻿package pikpak
+package pikpak
 
 import (
 	"context"
@@ -99,10 +99,52 @@ func (c *Client) MakeDir(ctx context.Context, parentID, name string) (*FileItem,
 	return &resp, nil
 }
 
+// RenameFile renames a file or folder in PikPak
+func (c *Client) RenameFile(ctx context.Context, fileID, newName string) error {
+	reqURL := fmt.Sprintf("%s/drive/v1/files/%s", ApiDriveBaseURL, fileID)
+	reqBody := map[string]interface{}{
+		"name": newName,
+	}
+	return c.DoRequest(ctx, http.MethodPatch, reqURL, reqBody, nil)
+}
+
 // GetStorageAbout gets disk usage and quota details
 func (c *Client) GetStorageAbout(ctx context.Context) (*AboutResponse, error) {
 	reqURL := fmt.Sprintf("%s/drive/v1/about", ApiDriveBaseURL)
 	var resp AboutResponse
+
+	err := c.DoRequest(ctx, http.MethodGet, reqURL, nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return &resp, nil
+}
+
+// EmptyTrash permanently empties the trash folder
+func (c *Client) EmptyTrash(ctx context.Context) error {
+	_ = c.RefreshCaptchaToken(ctx, "PATCH:/drive/v1/files/trash:empty")
+	reqURL := fmt.Sprintf("%s/drive/v1/files/trash:empty", ApiDriveBaseURL)
+	return c.DoRequest(ctx, http.MethodPatch, reqURL, map[string]interface{}{}, nil)
+}
+
+// ListTrashFiles retrieves files currently residing in trash
+func (c *Client) ListTrashFiles(ctx context.Context, pageToken string, limit int) (*FileListResponse, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+
+	params := url.Values{}
+	params.Set("thumbnail_size", "SIZE_LARGE")
+	params.Set("with_audit", "true")
+	params.Set("limit", strconv.Itoa(limit))
+	params.Set("filters", `{"trashed":{"eq":true}}`)
+	if pageToken != "" {
+		params.Set("page_token", pageToken)
+	}
+
+	reqURL := fmt.Sprintf("%s/drive/v1/files?%s", ApiDriveBaseURL, params.Encode())
+	var resp FileListResponse
 
 	err := c.DoRequest(ctx, http.MethodGet, reqURL, nil, &resp)
 	if err != nil {

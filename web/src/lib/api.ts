@@ -1,4 +1,4 @@
-﻿export interface Account {
+export interface Account {
   id: number
   name: string
   username: string
@@ -104,6 +104,13 @@ export interface PlaybackInfo {
   account_name: string
 }
 
+export interface SystemSettings {
+  storage_balancing_enabled: boolean
+  storage_min_free_gb: number
+  auto_cleanup_enabled: boolean
+  auto_cleanup_days: number
+}
+
 async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(url, {
     ...options,
@@ -128,19 +135,47 @@ async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
   return res.json()
 }
 
+export interface UserInfo {
+  id: number
+  username: string
+  role: "admin" | "user" | string
+  created_at: string
+  updated_at: string
+}
+
 export const api = {
   // Auth
   login: (username: string, password: string) =>
-    request<{ success: boolean; token: string; username: string }>("/api/auth/login", {
+    request<{ success: boolean; token: string; username: string; role: "admin" | "user" }>("/api/auth/login", {
       method: "POST",
       body: JSON.stringify({ username, password }),
     }),
   logout: () => request<{ success: boolean }>("/api/auth/logout", { method: "POST" }),
-  getMe: () => request<{ user_id: number; username: string }>("/api/auth/me"),
+  getMe: () => request<{ user_id: number; username: string; role: "admin" | "user" }>("/api/auth/me"),
   changePassword: (old_password: string, new_password: string) =>
     request<{ success: boolean }>("/api/auth/change-password", {
       method: "POST",
       body: JSON.stringify({ old_password, new_password }),
+    }),
+  updateProfile: (data: { username?: string; old_password?: string; new_password?: string }) =>
+    request<{ success: boolean; username: string; token: string; message: string }>("/api/auth/profile", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  // User Management (Admin Only)
+  listUsers: () => request<{ users: UserInfo[] }>("/api/users"),
+  createUser: (data: { username: string; password: string; role?: string }) =>
+    request<{ success: boolean; user: UserInfo; message: string }>("/api/users", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  deleteUser: (id: number) =>
+    request<{ success: boolean; message: string }>(`/api/users/${id}`, { method: "DELETE" }),
+  resetUserPassword: (id: number, newPassword: string) =>
+    request<{ success: boolean; message: string }>(`/api/users/${id}/reset-password`, {
+      method: "POST",
+      body: JSON.stringify({ new_password: newPassword }),
     }),
 
   // Dashboard
@@ -161,6 +196,10 @@ export const api = {
     ),
   resetQuota: (id: number) =>
     request<{ success: boolean }>(`/api/accounts/${id}/reset-quota`, { method: "POST" }),
+  initializeAccount: (id: number) =>
+    request<{ success: boolean; message: string }>(`/api/accounts/${id}/initialize`, {
+      method: "POST",
+    }),
   testProxy: (proxy_url: string) =>
     request<{ success: boolean; latency_ms: number; egress_ip: string; error?: string }>(
       "/api/accounts/test-proxy",
@@ -176,11 +215,16 @@ export const api = {
     request<VirtualFile[]>(
       `/api/files/search?keyword=${encodeURIComponent(keyword)}${account_id ? `&account_id=${account_id}` : ""}`
     ),
-  batchDelete: (virtual_ids: string[], permanent = false) =>
+  batchDelete: (virtual_ids: string[], permanent = true) =>
     request<{ total: number; success: number; failed: number; items: { virtual_id: string; success: boolean; error?: string }[] }>(
       "/api/files/batch-delete",
       { method: "POST", body: JSON.stringify({ virtual_ids, permanent }) }
     ),
+  renameFile: (virtual_id: string, name: string) =>
+    request<{ success: boolean; name: string }>("/api/files/rename", {
+      method: "POST",
+      body: JSON.stringify({ virtual_id, name }),
+    }),
 
   // Media
   getPlaybackInfo: (virtual_id: string) => request<PlaybackInfo>(`/api/media/info/${virtual_id}`),
@@ -191,9 +235,12 @@ export const api = {
       `/api/offline/tasks?status=${status}&limit=${limit}&offset=${offset}`
     ),
   getTask: (id: string) => request<OfflineTask>(`/api/offline/tasks/${id}`),
-  submitOffline: (urls: string[] | string, name = "") => {
-    const payload = typeof urls === "string" ? { url: urls, name } : { urls, name }
-    return request<{ success: boolean; results?: any[]; task_id?: string; status?: string }>("/api/offline/tasks", {
+  submitOffline: (urls: string[] | string, name = "", fileSizeGB?: number) => {
+    const payload: any = typeof urls === "string" ? { url: urls, name } : { urls, name }
+    if (fileSizeGB && fileSizeGB > 0) {
+      payload.file_size_gb = fileSizeGB
+    }
+    return request<{ success: boolean; results?: any[]; task_id?: string; status?: string; account?: string }>("/api/offline/tasks", {
       method: "POST",
       body: JSON.stringify(payload),
     })
@@ -204,6 +251,19 @@ export const api = {
     request<{ success: boolean }>(`/api/offline/tasks/${id}/cancel`, { method: "POST" }),
   retryTask: (id: string) =>
     request<any>(`/api/offline/tasks/${id}/retry`, { method: "POST" }),
+
+  // Settings & Automation Policies
+  getSettings: () => request<SystemSettings>("/api/settings"),
+  updateSettings: (settings: SystemSettings) =>
+    request<{ success: boolean; message: string; settings: SystemSettings }>("/api/settings", {
+      method: "POST",
+      body: JSON.stringify(settings),
+    }),
+  triggerCleanup: (days?: number) =>
+    request<{ success: boolean; cleaned_tasks_count: number; retention_days: number; message: string }>(
+      `/api/settings/cleanup/trigger${days ? `?days=${days}` : ""}`,
+      { method: "POST" }
+    ),
 
   // API Keys
   listApiKeys: () => request<APIKey[]>("/api/apikeys"),

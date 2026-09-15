@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="pikleech_grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#06b6d4"/>
+      <stop offset="50%" stop-color="#3b82f6"/>
+      <stop offset="100%" stop-color="#8b5cf6"/>
+    </linearGradient>
+    <linearGradient id="bg_grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0b0f19"/>
+      <stop offset="100%" stop-color="#111827"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="30" fill="url(#bg_grad)"/>
+  <rect width="124" height="124" x="2" y="2" rx="28" fill="none" stroke="url(#pikleech_grad)" stroke-width="2" stroke-opacity="0.3"/>
+  <path d="M42 34 h26 c13.2 0 22 8.8 22 20 c0 11.2 -8.8 20 -22 20 h-14 v24 h-12 Z m12 10 v20 h14 c6.6 0 10 -4 10 -10 c0 -6 -3.4 -10 -10 -10 Z" fill="url(#pikleech_grad)"/>
+  <path d="M34 68 C34 52 50 44 68 44 C82 44 94 52 96 66" fill="none" stroke="#22d3ee" stroke-width="5" stroke-linecap="round"/>
+  <path d="M64 74 L64 96 M54 86 L64 96 L74 86" fill="none" stroke="url(#pikleech_grad)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

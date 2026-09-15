@@ -1,4 +1,4 @@
-﻿package api
+package api
 
 import (
 	"bytes"
@@ -169,5 +169,69 @@ func TestAPI_ServerAndV1(t *testing.T) {
 	bodyStr := w.Body.String()
 	if bytes.Contains(w.Body.Bytes(), []byte("password")) || bytes.Contains(w.Body.Bytes(), []byte("refresh_token")) {
 		t.Fatalf("Security violation: accounts/status leaked credential fields: %s", bodyStr)
+	}
+
+	// 7. Test User Management: Admin creates a regular user
+	createUserBody, _ := json.Marshal(map[string]string{
+		"username": "alice",
+		"password": "alicepassword123",
+		"role":     "user",
+	})
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/users", bytes.NewReader(createUserBody))
+	req.Header.Set("Authorization", "Bearer "+loginResp.Token)
+	req.Header.Set("Content-Type", "application/json")
+	server.Engine.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected create user 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// 8. Normal user login
+	aliceLoginBody, _ := json.Marshal(map[string]string{
+		"username": "alice",
+		"password": "alicepassword123",
+	})
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(aliceLoginBody))
+	req.Header.Set("Content-Type", "application/json")
+	server.Engine.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected alice login 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var aliceLoginResp struct {
+		Success bool   `json:"success"`
+		Token   string `json:"token"`
+		Role    string `json:"role"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &aliceLoginResp)
+	if aliceLoginResp.Role != "user" {
+		t.Errorf("Expected alice role 'user', got '%s'", aliceLoginResp.Role)
+	}
+
+	// 9. Normal user attempts to access Admin route /api/accounts -> must be 403 Forbidden!
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/accounts", nil)
+	req.Header.Set("Authorization", "Bearer "+aliceLoginResp.Token)
+	server.Engine.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("Expected 403 Forbidden for normal user accessing /api/accounts, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// 10. Normal user attempts to access /api/settings -> must be 403 Forbidden!
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/settings", nil)
+	req.Header.Set("Authorization", "Bearer "+aliceLoginResp.Token)
+	server.Engine.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("Expected 403 Forbidden for normal user accessing /api/settings, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// 11. Normal user accesses /api/files -> allowed 200 OK
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/files", nil)
+	req.Header.Set("Authorization", "Bearer "+aliceLoginResp.Token)
+	server.Engine.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected 200 OK for normal user accessing /api/files, got %d", w.Code)
 	}
 }

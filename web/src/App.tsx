@@ -1,22 +1,18 @@
-﻿import React, { useState, useEffect } from "react"
+import React, { useState, useEffect } from "react"
 import { Navbar } from "./components/Navbar"
-import { Sidebar, PageTab } from "./components/Sidebar"
 import { NewOfflineModal } from "./components/NewOfflineModal"
-import { DashboardPage } from "./pages/DashboardPage"
 import { FilesPage } from "./pages/FilesPage"
-import { TasksPage } from "./pages/TasksPage"
-import { AccountsPage } from "./pages/AccountsPage"
-import { ApiKeysPage } from "./pages/ApiKeysPage"
-import { AuditPage } from "./pages/AuditPage"
+import { SettingsPage } from "./pages/SettingsPage"
 import { LoginPage } from "./pages/LoginPage"
 import { api } from "./lib/api"
 import { Loader2 } from "lucide-react"
 
 export const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<string | null>(null)
+  const [currentRole, setCurrentRole] = useState<string>("user")
   const [authChecking, setAuthChecking] = useState(true)
-  const [currentTab, setCurrentTab] = useState<PageTab>("dashboard")
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
+  const [currentPage, setCurrentPage] = useState<"files" | "settings">("files")
+  const [searchKeyword, setSearchKeyword] = useState("")
   const [showNewOffline, setShowNewOffline] = useState(false)
   const [isDarkMode, setIsDarkMode] = useState(() => {
     return localStorage.getItem("pikpak_theme") === "dark" ||
@@ -39,6 +35,7 @@ export const App: React.FC = () => {
       .then((res) => {
         if (res && res.username) {
           setCurrentUser(res.username)
+          setCurrentRole(res.role || "user")
         }
       })
       .catch(() => {
@@ -54,6 +51,7 @@ export const App: React.FC = () => {
       await api.logout()
     } finally {
       setCurrentUser(null)
+      setCurrentRole("user")
     }
   }
 
@@ -69,49 +67,58 @@ export const App: React.FC = () => {
   }
 
   if (!currentUser) {
-    return <LoginPage onLoginSuccess={(u) => setCurrentUser(u)} />
+    return (
+      <LoginPage
+        onLoginSuccess={(u, r) => {
+          setCurrentUser(u)
+          setCurrentRole(r || "user")
+        }}
+      />
+    )
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-background text-foreground">
+    <div className="min-h-screen flex flex-col bg-background text-foreground w-full max-w-full overflow-x-hidden">
       <Navbar
         username={currentUser}
-        onLogout={handleLogout}
-        onToggleMobileMenu={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+        currentPage={currentPage}
+        onNavigate={(page) => {
+          setCurrentPage(page)
+          if (page === "files") {
+            setSearchKeyword("")
+          }
+        }}
         isDarkMode={isDarkMode}
         onToggleTheme={() => setIsDarkMode(!isDarkMode)}
+        searchQuery={searchKeyword}
+        onSearchChange={setSearchKeyword}
+        onClearSearch={() => setSearchKeyword("")}
       />
 
-      <div className="flex flex-1">
-        <Sidebar
-          currentTab={currentTab}
-          onSelectTab={(tab) => setCurrentTab(tab)}
-          isMobileOpen={isMobileMenuOpen}
-          onCloseMobile={() => setIsMobileMenuOpen(false)}
-        />
-
-        <main className="flex-1 p-4 md:p-6 lg:p-8 max-w-7xl mx-auto w-full overflow-y-auto">
-          {currentTab === "dashboard" && (
-            <DashboardPage
-              onOpenNewOffline={() => setShowNewOffline(true)}
-              onNavigate={(tab) => setCurrentTab(tab)}
-            />
-          )}
-          {currentTab === "files" && <FilesPage />}
-          {currentTab === "tasks" && (
-            <TasksPage onOpenNewOffline={() => setShowNewOffline(true)} />
-          )}
-          {currentTab === "accounts" && <AccountsPage />}
-          {currentTab === "apikeys" && <ApiKeysPage />}
-          {currentTab === "audit" && <AuditPage />}
-        </main>
-      </div>
+      <main className="flex-1 p-3 sm:p-5 md:p-6 lg:p-8 max-w-7xl mx-auto w-full min-w-0 max-w-full overflow-x-hidden">
+        {currentPage === "files" && (
+          <FilesPage
+            onOpenNewOffline={() => setShowNewOffline(true)}
+            searchKeyword={searchKeyword}
+            onClearSearch={() => setSearchKeyword("")}
+          />
+        )}
+        {currentPage === "settings" && (
+          <SettingsPage
+            currentUsername={currentUser}
+            currentUserRole={currentRole}
+            onUpdateUsername={(u) => setCurrentUser(u)}
+            onOpenNewOffline={() => setShowNewOffline(true)}
+            onLogout={handleLogout}
+          />
+        )}
+      </main>
 
       {showNewOffline && (
         <NewOfflineModal
           onClose={() => setShowNewOffline(false)}
           onSuccess={() => {
-            // Can trigger refresh if on tasks page
+            // Task submitted
           }}
         />
       )}

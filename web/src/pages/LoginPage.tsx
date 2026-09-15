@@ -1,9 +1,9 @@
-﻿import React, { useState } from "react"
+import React, { useState } from "react"
 import { Lock, User, Loader2, AlertCircle } from "lucide-react"
 import { api } from "../lib/api"
 
 interface LoginPageProps {
-  onLoginSuccess: (username: string) => void
+  onLoginSuccess: (username: string, role?: string) => void
 }
 
 export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
@@ -20,7 +20,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
     try {
       const res = await api.login(username.trim(), password)
       if (res.success) {
-        onLoginSuccess(res.username || username)
+        onLoginSuccess(res.username || username, res.role)
       }
     } catch (err: any) {
       setError(err.message || "用户名或密码错误")
@@ -32,14 +32,20 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
   return (
     <div className="flex min-h-screen w-full items-center justify-center bg-background px-4">
       <div className="w-full max-w-md rounded-3xl border bg-card p-8 shadow-2xl space-y-6">
-        <div className="text-center space-y-2">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground font-black text-2xl shadow-lg shadow-primary/25">
-            P
+        <div className="text-center space-y-3">
+          <div className="flex justify-center">
+            <img
+              src="/logo.png"
+              alt="PikLeech Logo"
+              className="w-16 h-16 rounded-2xl shadow-lg hover:scale-105 transition-transform"
+            />
           </div>
-          <h1 className="text-2xl font-bold tracking-tight">PikPak 聚合网盘</h1>
-          <p className="text-xs text-muted-foreground">
-            多账号离线额度自动调度 · 统一虚拟云盘管理系统
-          </p>
+          <div className="space-y-1">
+            <h1 className="text-2xl font-black tracking-tight">PikLeech</h1>
+            <p className="text-xs text-muted-foreground">
+              多账号离线额度聚合 · 统一虚拟云盘系统
+            </p>
+          </div>
         </div>
 
         {error && (
@@ -52,14 +58,14 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              管理员用户名
+              用户名
             </label>
             <div className="relative mt-1.5">
               <User className="absolute left-3.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <input
                 type="text"
                 required
-                placeholder="默认: admin"
+                placeholder="管理员或普通用户账号"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 className="w-full rounded-xl border bg-background pl-10 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"

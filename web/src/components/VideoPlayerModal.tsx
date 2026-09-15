@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef } from "react"
+import React, { useState, useEffect, useRef } from "react"
 import { X, Play, Pause, Volume2, VolumeX, Maximize, RotateCcw, ShieldCheck, Zap } from "lucide-react"
 import { api, PlaybackInfo } from "../lib/api"
 import { formatBytes } from "../lib/utils"
@@ -17,7 +17,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const [playbackInfo, setPlaybackInfo] = useState<PlaybackInfo | null>(null)
-  const [streamMode, setStreamMode] = useState<"proxy" | "direct">("proxy")
+  const [streamMode, setStreamMode] = useState<"proxy" | "direct">("direct")
   const [isPlaying, setIsPlaying] = useState(false)
   const [isMuted, setIsMuted] = useState(false)
   const [playbackRate, setPlaybackRate] = useState(1)

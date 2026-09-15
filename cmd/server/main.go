@@ -22,6 +22,7 @@ import (
 	"pikpak-manager/internal/fileagg"
 	"pikpak-manager/internal/offline"
 	"pikpak-manager/internal/scheduler"
+	"pikpak-manager/internal/settings"
 	"pikpak-manager/web"
 )
 
@@ -41,8 +42,9 @@ func main() {
 	defer database.Close()
 
 	// Initialize services
+	settingsSvc := settings.NewService(database)
 	accSvc := account.NewService(database, cfg.AppSecret)
-	accountScheduler := scheduler.NewAccountScheduler(accSvc)
+	accountScheduler := scheduler.NewAccountScheduler(accSvc, settingsSvc)
 	offSvc := offline.NewService(database, accSvc, accountScheduler)
 	fileSvc := fileagg.NewService(database, accSvc)
 	authSvc := auth.NewService(database, cfg.AppSecret)
@@ -69,6 +71,22 @@ func main() {
 		}
 	}()
 
+	// Periodic Auto Cleanup of expired offline downloads (every 30 minutes)
+	go func() {
+		ticker := time.NewTicker(30 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if set, err := settingsSvc.GetSettings(ctx); err == nil && set.AutoCleanupEnabled && set.AutoCleanupDays > 0 {
+					_, _ = offSvc.CleanExpiredTasks(ctx, set.AutoCleanupDays)
+				}
+			}
+		}
+	}()
+
 	server := api.NewServer(
 		accSvc,
 		fileSvc,
@@ -78,6 +96,7 @@ func main() {
 		auditSvc,
 		dashSvc,
 		&web.DistFS,
+		settingsSvc,
 	)
 
 	addr := fmt.Sprintf(":%s", cfg.Port)

@@ -1,4 +1,4 @@
-﻿package db
+package db
 
 import (
 	"database/sql"
@@ -60,7 +60,7 @@ func seedAdmin(db *sql.DB, username, password string) error {
 		}
 
 		now := time.Now().UTC()
-		_, err = db.Exec("INSERT INTO users (username, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?)",
+		_, err = db.Exec("INSERT INTO users (username, password_hash, role, created_at, updated_at) VALUES (?, ?, 'admin', ?, ?)",
 			username, string(hash), now, now)
 		if err != nil {
 			return err

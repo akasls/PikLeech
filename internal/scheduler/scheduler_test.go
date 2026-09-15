@@ -1,4 +1,4 @@
-﻿package scheduler
+package scheduler
 
 import (
 	"context"
@@ -90,7 +90,7 @@ func TestScheduler_QuotaExhaustedFailover(t *testing.T) {
 	})
 
 	// Submit task
-	task, usedAcc, err := sched.SubmitOfflineTask(ctx, "magnet:?xt=urn:btih:test1", "Movie.mp4")
+	task, usedAcc, err := sched.SubmitOfflineTask(ctx, "magnet:?xt=urn:btih:test1", "Movie.mp4", "")
 	if err != nil {
 		t.Fatalf("SubmitOfflineTask failed: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestScheduler_AllAccountsQuotaExhausted(t *testing.T) {
 		return nil, pikpak.ErrQuotaExceeded
 	})
 
-	task, usedAcc, err := sched.SubmitOfflineTask(ctx, "magnet:?xt=urn:btih:test2", "")
+	task, usedAcc, err := sched.SubmitOfflineTask(ctx, "magnet:?xt=urn:btih:test2", "", "")
 	if task != nil || usedAcc != nil {
 		t.Errorf("Expected nil task and account when all exhausted")
 	}
@@ -181,7 +181,7 @@ func TestScheduler_ProxyFailureDoesNotExhaustQuota(t *testing.T) {
 		return &pikpak.OfflineTask{ID: "task_b_ok"}, nil
 	})
 
-	task, usedAcc, err := sched.SubmitOfflineTask(ctx, "magnet:?xt=urn:btih:test3", "")
+	task, usedAcc, err := sched.SubmitOfflineTask(ctx, "magnet:?xt=urn:btih:test3", "", "")
 	if err != nil {
 		t.Fatalf("SubmitOfflineTask failed: %v", err)
 	}
@@ -243,7 +243,7 @@ func TestScheduler_ConcurrentSubmissions(t *testing.T) {
 		wg.Add(1)
 		go func(taskIdx int) {
 			defer wg.Done()
-			task, _, err := sched.SubmitOfflineTask(ctx, "magnet:?xt=urn:btih:concurrent", "")
+			task, _, err := sched.SubmitOfflineTask(ctx, "magnet:?xt=urn:btih:concurrent", "", "")
 			if err != nil || task == nil {
 				mu.Lock()
 				errCount++
@@ -257,3 +257,65 @@ func TestScheduler_ConcurrentSubmissions(t *testing.T) {
 		t.Errorf("Expected 0 concurrent task errors, got %d", errCount)
 	}
 }
+
+// Scenario: Storage Auto Balancing - Account A has 95GB used (5GB free), Account B has 20GB used (80GB free)
+// Requesting a 10GB task must automatically skip Account A and pick Account B!
+func TestScheduler_StorageAutoBalancing(t *testing.T) {
+	sched, svc, cleanup := setupTestScheduler(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Account A: 100GB total, 95GB used (5GB free)
+	accA, err := svc.CreateAccount(ctx, account.CreateAccountReq{
+		Name:      "Account-95GB",
+		Priority:  10,
+		IsEnabled: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount A failed: %v", err)
+	}
+	// Account B: 100GB total, 20GB used (80GB free)
+	accB, err := svc.CreateAccount(ctx, account.CreateAccountReq{
+		Name:      "Account-20GB",
+		Priority:  10,
+		IsEnabled: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount B failed: %v", err)
+	}
+
+	// Update storage in database
+	total100G := int64(100 * 1024 * 1024 * 1024)
+	used95G := int64(95 * 1024 * 1024 * 1024)
+	used20G := int64(20 * 1024 * 1024 * 1024)
+	_, _ = svc.GetDB().Exec("UPDATE pikpak_accounts SET total_space = ?, used_space = ? WHERE id = ?", total100G, used95G, accA.ID)
+	_, _ = svc.GetDB().Exec("UPDATE pikpak_accounts SET total_space = ?, used_space = ? WHERE id = ?", total100G, used20G, accB.ID)
+
+	// Test 1: Task requiring 10GB (10 * 1024^3 bytes)
+	req10G := int64(10 * 1024 * 1024 * 1024)
+	picked, err := sched.SelectAccount(nil, req10G)
+	if err != nil {
+		t.Fatalf("SelectAccount for 10GB failed: %v", err)
+	}
+	if picked.ID != accB.ID {
+		t.Errorf("Expected Account B (%d) to be picked for 10GB task, but got Account A (%d)", accB.ID, picked.ID)
+	}
+
+	// Test 2: Task with unspecified size should pick Account B because 80GB free > 5GB free
+	pickedDefault, err := sched.SelectAccount(nil)
+	if err != nil {
+		t.Fatalf("SelectAccount default failed: %v", err)
+	}
+	if pickedDefault.ID != accB.ID {
+		t.Errorf("Expected Account B with max free space (80GB) to be picked, but got %s", pickedDefault.Name)
+	}
+
+	// Test 3: Task requiring 90GB (exceeds both accounts' free space: 80GB max)
+	req90G := int64(90 * 1024 * 1024 * 1024)
+	_, err = sched.SelectAccount(nil, req90G)
+	if !errors.Is(err, ErrInsufficientStorage) {
+		t.Errorf("Expected ErrInsufficientStorage for 90GB task, got: %v", err)
+	}
+}
+

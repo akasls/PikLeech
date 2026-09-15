@@ -1,4 +1,4 @@
-﻿package fileagg
+package fileagg
 
 import (
 	"encoding/base64"
@@ -21,6 +21,7 @@ type VirtualFile struct {
 	IsFolder      bool      `json:"is_folder"`
 	IsVideo       bool      `json:"is_video"`
 	ThumbnailLink string    `json:"thumbnail_link"`
+	UserID        int64     `json:"user_id,omitempty"`
 	CreatedTime   time.Time `json:"created_time"`
 	ModifiedTime  time.Time `json:"modified_time"`
 }

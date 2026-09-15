@@ -137,7 +137,7 @@ func TestLiveFullSystemE2E(t *testing.T) {
 
 	// 3. 虚拟文件系统聚合与文件浏览测试
 	t.Log("===> Step 3: Testing Unified Virtual File System...")
-	rootFiles, err := fileSvc.ListFiles(ctx, "root", "name", "asc")
+	rootFiles, err := fileSvc.ListFiles(ctx, "root", 1, "admin", "admin", "name", "asc")
 	if err != nil {
 		t.Fatalf("Failed to list root files: %v", err)
 	}
@@ -199,7 +199,7 @@ func TestLiveFullSystemE2E(t *testing.T) {
 	t.Log("===> Step 5: Testing Offline Download submission on live PikPak...")
 	// 使用快速且公开合法的测试资源 (Debian CD torrent)
 	testURL := "https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/debian-12.7.0-amd64-netinst.iso.torrent"
-	taskRes, err := offSvc.SubmitSingleLink(ctx, testURL, "debian-netinst-test.torrent", "")
+	taskRes, err := offSvc.SubmitSingleLink(ctx, testURL, "debian-netinst-test.torrent", "", 1, "admin")
 	if err != nil {
 		t.Fatalf("Failed to submit offline task: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestLiveFullSystemE2E(t *testing.T) {
 	t.Logf("Account 1 (Priority 20) marked as QUOTA_EXHAUSTED")
 
 	// 提交新任务，验证调度器自动故障转移选择账号 2 (Priority 10)
-	failoverTaskRes, err := offSvc.SubmitSingleLink(ctx, testURL, "failover-test.torrent", "")
+	failoverTaskRes, err := offSvc.SubmitSingleLink(ctx, testURL, "failover-test.torrent", "", 1, "admin")
 	if err != nil {
 		t.Fatalf("Failover task submission failed: %v", err)
 	}

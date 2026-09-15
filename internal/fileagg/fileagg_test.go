@@ -1,4 +1,4 @@
-﻿package fileagg
+package fileagg
 
 import (
 	"context"
@@ -89,7 +89,7 @@ func TestFileAgg_SameNameFilesAndSearch(t *testing.T) {
 	}
 
 	// Search by keyword "Interstellar"
-	results, err := svc.SearchFiles(context.Background(), "Interstellar", 0)
+	results, err := svc.SearchFiles(context.Background(), "Interstellar", 0, 0)
 	if err != nil {
 		t.Fatalf("SearchFiles failed: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestFileAgg_BatchDeleteGrouping(t *testing.T) {
 		VirtualIDs: []string{vID_A1, vID_A2, vID_B1, "invalid_virtual_id"},
 	}
 
-	res, err := svc.BatchDelete(ctx, req)
+	res, err := svc.BatchDelete(ctx, req, 1, "admin")
 	if err != nil {
 		t.Fatalf("BatchDelete returned unexpected fatal error: %v", err)
 	}

@@ -182,6 +182,29 @@ func (c *Client) SetCooldown(duration time.Duration) {
 	c.cooldownUntil = time.Now().Add(duration)
 }
 
+// EnsureAuthenticated ensures the client has a valid access token.
+func (c *Client) EnsureAuthenticated(ctx context.Context) error {
+	c.mu.Lock()
+	hasToken := c.accessToken != ""
+	c.mu.Unlock()
+
+	if hasToken {
+		return nil
+	}
+
+	if c.refreshToken != "" {
+		if err := c.RefreshToken(ctx); err == nil {
+			return nil
+		}
+	}
+
+	if c.username != "" && c.password != "" {
+		return c.Login(ctx)
+	}
+
+	return ErrAuthFailed
+}
+
 // DoRequest sends an authenticated HTTP request, handles automatic token refresh and error parsing.
 func (c *Client) DoRequest(ctx context.Context, method, reqURL string, reqBody interface{}, respResult interface{}) error {
 	return c.doRequest(ctx, method, reqURL, reqBody, respResult, false)
@@ -190,6 +213,21 @@ func (c *Client) DoRequest(ctx context.Context, method, reqURL string, reqBody i
 func (c *Client) doRequest(ctx context.Context, method, reqURL string, reqBody interface{}, respResult interface{}, retried bool) error {
 	if c.IsCooldown() {
 		return ErrRateLimited
+	}
+
+	c.mu.Lock()
+	token := c.accessToken
+	captchaTok := c.captchaToken
+	c.mu.Unlock()
+
+	// If accessToken is missing, automatically authenticate first
+	if token == "" && !strings.Contains(reqURL, "/v1/auth/") && !strings.Contains(reqURL, "/v1/shield/") {
+		if authErr := c.EnsureAuthenticated(ctx); authErr == nil {
+			c.mu.Lock()
+			token = c.accessToken
+			captchaTok = c.captchaToken
+			c.mu.Unlock()
+		}
 	}
 
 	var bodyReader io.Reader
@@ -209,16 +247,12 @@ func (c *Client) doRequest(ctx context.Context, method, reqURL string, reqBody i
 	// Attach standard headers
 	req.Header.Set("User-Agent", c.getUserAgent())
 	req.Header.Set("X-Device-ID", c.deviceID)
-	if c.captchaToken != "" {
-		req.Header.Set("X-Captcha-Token", c.captchaToken)
+	if captchaTok != "" {
+		req.Header.Set("X-Captcha-Token", captchaTok)
 	}
 	if reqBody != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-
-	c.mu.Lock()
-	token := c.accessToken
-	c.mu.Unlock()
 
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -241,11 +275,25 @@ func (c *Client) doRequest(ctx context.Context, method, reqURL string, reqBody i
 		return ClassifyError(nil, 429, respBytes)
 	}
 
-	// Handle Token Expired (401, error_code 16, 4121, 4122)
+	// Classify error response
 	classifiedErr := ClassifyError(nil, resp.StatusCode, respBytes)
+
+	// Handle Token Expired or Missing (401, error_code 16, 4121, 4122)
 	if !retried && errors.Is(classifiedErr, ErrAuthFailed) {
-		// Attempt token refresh and retry at most once to prevent infinite recursive loop
-		if refreshErr := c.RefreshToken(ctx); refreshErr == nil {
+		// Clear cached token so EnsureAuthenticated actually refreshes or logs in
+		c.mu.Lock()
+		c.accessToken = ""
+		c.mu.Unlock()
+		if authErr := c.EnsureAuthenticated(ctx); authErr == nil {
+			return c.doRequest(ctx, method, reqURL, reqBody, respResult, true)
+		}
+		return classifiedErr
+	}
+
+	// Handle Captcha Token Expired / Required (code 9: NEED_CAPTCHA)
+	if !retried && errors.Is(classifiedErr, ErrNeedCaptcha) && !strings.Contains(reqURL, "/v1/shield/captcha/init") {
+		action := GetAction(method, reqURL)
+		if refreshErr := c.RefreshCaptchaToken(ctx, action); refreshErr == nil {
 			return c.doRequest(ctx, method, reqURL, reqBody, respResult, true)
 		}
 		return classifiedErr
@@ -282,4 +330,13 @@ func (c *Client) GetStreamingClient() *http.Client {
 
 func (c *Client) GetTransport() *http.Transport {
 	return c.transport
+}
+
+// GetAction extracts the method:path action string required by PikPak captcha shield
+func GetAction(method, rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return method + ":"
+	}
+	return method + ":" + parsed.Path
 }

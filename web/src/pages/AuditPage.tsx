@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from "react"
+import React, { useState, useEffect } from "react"
 import { FileText, RefreshCw, Loader2 } from "lucide-react"
 import { api, AuditLog } from "../lib/api"
 import { formatDate } from "../lib/utils"
@@ -25,13 +25,8 @@ export const AuditPage: React.FC = () => {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between border-b pb-4">
-        <div>
-          <h2 className="text-xl font-bold tracking-tight">系统审计日志</h2>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            记录所有管理员重要操作，包括账号增删改、代理配置、文件批量删除与 API Key 签发
-          </p>
-        </div>
+      <div className="flex items-center justify-between border-b pb-3.5">
+        <h2 className="text-lg font-bold tracking-tight">系统审计日志</h2>
 
         <button
           onClick={loadLogs}
@@ -53,8 +48,8 @@ export const AuditPage: React.FC = () => {
           <p className="text-base font-semibold text-foreground">暂无审计日志</p>
         </div>
       ) : (
-        <div className="rounded-2xl border bg-card overflow-hidden shadow-sm">
-          <table className="w-full text-left text-sm">
+        <div className="rounded-2xl border bg-card overflow-x-auto shadow-sm">
+          <table className="w-full text-left text-sm min-w-[600px]">
             <thead className="border-b bg-secondary/40 text-xs font-semibold text-muted-foreground">
               <tr>
                 <th className="px-4 py-3 w-40">操作动作</th>

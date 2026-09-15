@@ -17,20 +17,22 @@ import (
 	"pikpak-manager/internal/dashboard"
 	"pikpak-manager/internal/fileagg"
 	"pikpak-manager/internal/offline"
+	"pikpak-manager/internal/settings"
 	"pikpak-manager/internal/stream"
 )
 
 type Server struct {
-	Engine         *gin.Engine
-	AccountService *account.Service
-	FileService    *fileagg.Service
-	OfflineService *offline.Service
-	AuthService    *auth.Service
-	ApiKeyService  *apikey.Service
-	AuditService   *audit.Service
-	DashService    *dashboard.Service
-	StreamHandler  *stream.Handler
-	FrontendFS     *embed.FS
+	Engine          *gin.Engine
+	AccountService  *account.Service
+	FileService     *fileagg.Service
+	OfflineService  *offline.Service
+	AuthService     *auth.Service
+	ApiKeyService   *apikey.Service
+	AuditService    *audit.Service
+	DashService     *dashboard.Service
+	SettingsService *settings.Service
+	StreamHandler   *stream.Handler
+	FrontendFS      *embed.FS
 }
 
 func NewServer(
@@ -42,20 +44,27 @@ func NewServer(
 	auditSvc *audit.Service,
 	dashSvc *dashboard.Service,
 	frontendFS *embed.FS,
+	optSettings ...*settings.Service,
 ) *Server {
 	engine := gin.Default()
 
+	var setSvc *settings.Service
+	if len(optSettings) > 0 {
+		setSvc = optSettings[0]
+	}
+
 	s := &Server{
-		Engine:         engine,
-		AccountService: accSvc,
-		FileService:    fileSvc,
-		OfflineService: offSvc,
-		AuthService:    authSvc,
-		ApiKeyService:  apiKeySvc,
-		AuditService:   auditSvc,
-		DashService:    dashSvc,
-		StreamHandler:  stream.NewHandler(fileSvc),
-		FrontendFS:     frontendFS,
+		Engine:          engine,
+		AccountService:  accSvc,
+		FileService:     fileSvc,
+		OfflineService:  offSvc,
+		AuthService:     authSvc,
+		ApiKeyService:   apiKeySvc,
+		AuditService:    auditSvc,
+		DashService:     dashSvc,
+		SettingsService: setSvc,
+		StreamHandler:   stream.NewHandler(fileSvc),
+		FrontendFS:      frontendFS,
 	}
 
 	s.setupRoutes()
@@ -81,26 +90,58 @@ func (s *Server) setupRoutes() {
 		{
 			protectedAuth.GET("/me", s.AuthService.HandleMe)
 			protectedAuth.POST("/change-password", s.AuthService.HandleChangePassword)
+			protectedAuth.POST("/profile", s.AuthService.HandleUpdateProfile)
 		}
 	}
 
-	// 3. Admin Protected API routes
+	// 3. Authenticated API routes
 	api := r.Group("/api")
 	api.Use(s.AuthService.AuthMiddleware())
 	{
-		// Accounts
-		api.GET("/accounts", s.handleListAccounts)
-		api.POST("/accounts", s.handleCreateAccount)
-		api.PUT("/accounts/:id", s.handleUpdateAccount)
-		api.DELETE("/accounts/:id", s.handleDeleteAccount)
-		api.POST("/accounts/:id/test", s.handleTestAccount)
-		api.POST("/accounts/:id/reset-quota", s.handleResetQuota)
-		api.POST("/accounts/test-proxy", s.handleTestProxy)
+		// Admin-only management endpoints
+		admin := api.Group("")
+		admin.Use(s.AuthService.RequireAdmin())
+		{
+			// Accounts
+			admin.GET("/accounts", s.handleListAccounts)
+			admin.POST("/accounts", s.handleCreateAccount)
+			admin.PUT("/accounts/:id", s.handleUpdateAccount)
+			admin.DELETE("/accounts/:id", s.handleDeleteAccount)
+			admin.POST("/accounts/:id/test", s.handleTestAccount)
+			admin.POST("/accounts/:id/reset-quota", s.handleResetQuota)
+			admin.POST("/accounts/:id/initialize", s.handleInitializeAccount)
+			admin.POST("/accounts/test-proxy", s.handleTestProxy)
 
+			// User Management
+			admin.GET("/users", s.AuthService.HandleListUsers)
+			admin.POST("/users", s.AuthService.HandleCreateUser)
+			admin.DELETE("/users/:id", s.AuthService.HandleDeleteUser)
+			admin.POST("/users/:id/reset-password", s.AuthService.HandleAdminResetPassword)
+
+			// API Keys
+			admin.GET("/apikeys", s.handleListApiKeys)
+			admin.POST("/apikeys", s.handleCreateApiKey)
+			admin.DELETE("/apikeys/:id", s.handleDeleteApiKey)
+			admin.POST("/apikeys/:id/toggle", s.handleToggleApiKey)
+
+			// Audit Logs
+			admin.GET("/audit/logs", s.handleListAuditLogs)
+
+			// Dashboard
+			admin.GET("/dashboard/stats", s.handleGetDashboardStats)
+
+			// Settings & Automation Policies
+			admin.GET("/settings", s.handleGetSettings)
+			admin.POST("/settings", s.handleUpdateSettings)
+			admin.POST("/settings/cleanup/trigger", s.handleTriggerCleanup)
+		}
+
+		// Operations accessible to all authenticated users (isolated per user)
 		// Files
 		api.GET("/files", s.handleListFiles)
 		api.GET("/files/search", s.handleSearchFiles)
 		api.POST("/files/batch-delete", s.handleBatchDelete)
+		api.POST("/files/rename", s.handleRenameFile)
 
 		// Media / Video Stream
 		api.GET("/media/info/:virtual_id", s.StreamHandler.GetPlaybackInfo)
@@ -113,18 +154,6 @@ func (s *Server) setupRoutes() {
 		api.DELETE("/offline/tasks/:id", s.handleDeleteOfflineTask)
 		api.POST("/offline/tasks/:id/cancel", s.handleCancelOfflineTask)
 		api.POST("/offline/tasks/:id/retry", s.handleRetryOfflineTask)
-
-		// API Keys
-		api.GET("/apikeys", s.handleListApiKeys)
-		api.POST("/apikeys", s.handleCreateApiKey)
-		api.DELETE("/apikeys/:id", s.handleDeleteApiKey)
-		api.POST("/apikeys/:id/toggle", s.handleToggleApiKey)
-
-		// Audit Logs
-		api.GET("/audit/logs", s.handleListAuditLogs)
-
-		// Dashboard
-		api.GET("/dashboard/stats", s.handleGetDashboardStats)
 	}
 
 	// 4. Public REST API v1 (Authenticated via Bearer API Key)
@@ -251,6 +280,24 @@ func (s *Server) handleResetQuota(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
+func (s *Server) handleInitializeAccount(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid account id"})
+		return
+	}
+
+	err = s.AccountService.InitializeAccount(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	username, _ := c.Get("username")
+	s.AuditService.Record("INITIALIZE_ACCOUNT", strconv.FormatInt(id, 10), "Account initialized: remote files and offline tasks cleared", "SUCCESS", username.(string))
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "account initialized successfully"})
+}
+
 func (s *Server) handleTestProxy(c *gin.Context) {
 	var req struct {
 		ProxyURL string `json:"proxy_url"`
@@ -268,13 +315,41 @@ func (s *Server) handleTestProxy(c *gin.Context) {
 	c.JSON(http.StatusOK, res)
 }
 
+func getUserContext(c *gin.Context) (int64, string, string) {
+	var uid int64 = 1
+	var username string = "admin"
+	var role string = "admin"
+
+	if v, exists := c.Get("user_id"); exists {
+		switch id := v.(type) {
+		case int64:
+			uid = id
+		case string:
+			uid, _ = strconv.ParseInt(id, 10, 64)
+		}
+	}
+	if v, exists := c.Get("username"); exists {
+		if u, ok := v.(string); ok && u != "" {
+			username = u
+		}
+	}
+	if v, exists := c.Get("role"); exists {
+		if r, ok := v.(string); ok && r != "" {
+			role = r
+		}
+	}
+
+	return uid, username, role
+}
+
 // File Handlers
 func (s *Server) handleListFiles(c *gin.Context) {
 	parentID := c.Query("parent_id")
 	sortBy := c.DefaultQuery("sort_by", "name")
 	sortOrder := c.DefaultQuery("sort_order", "asc")
 
-	files, err := s.FileService.ListFiles(c.Request.Context(), parentID, sortBy, sortOrder)
+	uid, username, role := getUserContext(c)
+	files, err := s.FileService.ListFiles(c.Request.Context(), parentID, uid, username, role, sortBy, sortOrder)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -286,7 +361,8 @@ func (s *Server) handleSearchFiles(c *gin.Context) {
 	keyword := c.Query("keyword")
 	accID, _ := strconv.ParseInt(c.Query("account_id"), 10, 64)
 
-	files, err := s.FileService.SearchFiles(c.Request.Context(), keyword, accID)
+	uid, _, _ := getUserContext(c)
+	files, err := s.FileService.SearchFiles(c.Request.Context(), keyword, uid, accID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -301,15 +377,35 @@ func (s *Server) handleBatchDelete(c *gin.Context) {
 		return
 	}
 
-	res, err := s.FileService.BatchDelete(c.Request.Context(), req)
+	uid, username, role := getUserContext(c)
+	res, err := s.FileService.BatchDelete(c.Request.Context(), req, uid, role)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	username, _ := c.Get("username")
-	s.AuditService.Record("BATCH_DELETE", strconv.Itoa(len(req.VirtualIDs)), fmt.Sprintf("Deleted %d files (failed %d)", res.Success, res.Failed), "SUCCESS", username.(string))
+	s.AuditService.Record("BATCH_DELETE", strconv.Itoa(len(req.VirtualIDs)), fmt.Sprintf("Deleted %d files (failed %d)", res.Success, res.Failed), "SUCCESS", username)
 	c.JSON(http.StatusOK, res)
+}
+
+func (s *Server) handleRenameFile(c *gin.Context) {
+	var req struct {
+		VirtualID string `json:"virtual_id" binding:"required"`
+		Name      string `json:"name" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	uid, username, role := getUserContext(c)
+	if err := s.FileService.RenameFile(c.Request.Context(), req.VirtualID, req.Name, uid, role); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	s.AuditService.Record("RENAME_FILE", req.VirtualID, "Renamed file to: "+req.Name, "SUCCESS", username)
+	c.JSON(http.StatusOK, gin.H{"success": true, "name": req.Name})
 }
 
 // Offline Task Handlers
@@ -318,7 +414,8 @@ func (s *Server) handleListOfflineTasks(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
-	tasks, total, err := s.OfflineService.ListTasks(c.Request.Context(), status, limit, offset)
+	uid, _, _ := getUserContext(c)
+	tasks, total, err := s.OfflineService.ListTasks(c.Request.Context(), status, uid, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -349,8 +446,9 @@ func (s *Server) handleSubmitOfflineTask(c *gin.Context) {
 		return
 	}
 
+	uid, username, _ := getUserContext(c)
 	idempotencyKey := c.GetHeader("Idempotency-Key")
-	res, err := s.OfflineService.SubmitBatchLinks(c.Request.Context(), req, idempotencyKey)
+	res, err := s.OfflineService.SubmitBatchLinks(c.Request.Context(), req, idempotencyKey, uid, username)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -379,7 +477,8 @@ func (s *Server) handleCancelOfflineTask(c *gin.Context) {
 
 func (s *Server) handleRetryOfflineTask(c *gin.Context) {
 	id := c.Param("id")
-	res, err := s.OfflineService.RetryTask(c.Request.Context(), id)
+	uid, username, _ := getUserContext(c)
+	res, err := s.OfflineService.RetryTask(c.Request.Context(), id, uid, username)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -469,11 +568,7 @@ func (s *Server) handleGetDashboardStats(c *gin.Context) {
 
 // Public v1 REST API Handlers
 func (s *Server) handleV1SubmitOffline(c *gin.Context) {
-	var req struct {
-		URL  string   `json:"url"`
-		URLs []string `json:"urls"`
-		Name string   `json:"name"`
-	}
+	var req offline.SubmitTaskReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -481,9 +576,14 @@ func (s *Server) handleV1SubmitOffline(c *gin.Context) {
 
 	idempotencyKey := c.GetHeader("Idempotency-Key")
 
+	reqBytes := req.FileSize
+	if reqBytes == 0 && req.FileSizeGB > 0 {
+		reqBytes = int64(req.FileSizeGB * 1024 * 1024 * 1024)
+	}
+
 	// If single URL provided
 	if req.URL != "" && len(req.URLs) == 0 && !strings.Contains(req.URL, "\n") {
-		res, err := s.OfflineService.SubmitSingleLink(c.Request.Context(), req.URL, req.Name, idempotencyKey)
+		res, err := s.OfflineService.SubmitSingleLink(c.Request.Context(), req.URL, req.Name, idempotencyKey, 1, "admin", reqBytes)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
 			return
@@ -498,11 +598,7 @@ func (s *Server) handleV1SubmitOffline(c *gin.Context) {
 	}
 
 	// Batch submission
-	batchResp, err := s.OfflineService.SubmitBatchLinks(c.Request.Context(), offline.SubmitTaskReq{
-		URL:  req.URL,
-		URLs: req.URLs,
-		Name: req.Name,
-	}, idempotencyKey)
+	batchResp, err := s.OfflineService.SubmitBatchLinks(c.Request.Context(), req, idempotencyKey, 1, "admin")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -526,7 +622,7 @@ func (s *Server) handleV1ListOffline(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
-	tasks, total, err := s.OfflineService.ListTasks(c.Request.Context(), status, limit, offset)
+	tasks, total, err := s.OfflineService.ListTasks(c.Request.Context(), status, 0, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -569,3 +665,72 @@ func (s *Server) handleV1AccountsStatus(c *gin.Context) {
 
 	c.JSON(http.StatusOK, res)
 }
+
+// Settings & Automation Policies Handlers
+func (s *Server) handleGetSettings(c *gin.Context) {
+	if s.SettingsService == nil {
+		c.JSON(http.StatusOK, gin.H{
+			"storage_balancing_enabled": true,
+			"storage_min_free_gb":        10,
+			"auto_cleanup_enabled":      false,
+			"auto_cleanup_days":         7,
+		})
+		return
+	}
+	cfg, err := s.SettingsService.GetSettings(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, cfg)
+}
+
+func (s *Server) handleUpdateSettings(c *gin.Context) {
+	if s.SettingsService == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "settings service not initialized"})
+		return
+	}
+	var req settings.SystemSettings
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := s.SettingsService.UpdateSettings(c.Request.Context(), req); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	username := c.GetString("username")
+	s.AuditService.Record("UPDATE_SETTINGS", "SystemSettings", fmt.Sprintf("Balancing=%v, MinFree=%dGB, Cleanup=%v, Days=%d", req.StorageBalancingEnabled, req.StorageMinFreeGB, req.AutoCleanupEnabled, req.AutoCleanupDays), "SUCCESS", username)
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "settings updated successfully", "settings": req})
+}
+
+func (s *Server) handleTriggerCleanup(c *gin.Context) {
+	days := 7
+	if s.SettingsService != nil {
+		if set, err := s.SettingsService.GetSettings(c.Request.Context()); err == nil && set.AutoCleanupDays > 0 {
+			days = set.AutoCleanupDays
+		}
+	}
+	if qDays := c.Query("days"); qDays != "" {
+		if n, err := strconv.Atoi(qDays); err == nil && n > 0 {
+			days = n
+		}
+	}
+
+	res, err := s.OfflineService.CleanExpiredTasks(c.Request.Context(), days)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	username := c.GetString("username")
+	s.AuditService.Record("MANUAL_CLEANUP", "ExpiredTasks", fmt.Sprintf("Manually triggered cleanup for tasks older than %d days. Cleaned %d tasks.", days, res.CleanedTasksCount), "SUCCESS", username)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":             true,
+		"cleaned_tasks_count": res.CleanedTasksCount,
+		"retention_days":      days,
+		"message":             fmt.Sprintf("已成功清理 %d 个超过 %d 天的过期离线任务，远端文件与回收站已清空", res.CleanedTasksCount, days),
+	})
+}
+

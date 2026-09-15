@@ -31,6 +31,10 @@ func NewService(db *sql.DB, appSecret string) *Service {
 	}
 }
 
+func (s *Service) GetDB() *sql.DB {
+	return s.db
+}
+
 func (s *Service) CreateAccount(ctx context.Context, req CreateAccountReq) (*Account, error) {
 	if strings.TrimSpace(req.Name) == "" {
 		return nil, errors.New("account name cannot be empty")
@@ -431,4 +435,132 @@ func (s *Service) TestProxy(ctx context.Context, proxyURL string) (*ProxyTestRes
 		LatencyMs: latency,
 		EgressIP:  ip,
 	}, nil
+}
+
+// SyncAccountStorage queries PikPak for latest used and total space and saves to DB
+func (s *Service) SyncAccountStorage(ctx context.Context, id int64) error {
+	client, err := s.GetClient(id)
+	if err != nil {
+		return err
+	}
+	about, err := client.GetStorageAbout(ctx)
+	if err != nil {
+		return err
+	}
+	used, _ := strconv.ParseInt(about.Quota.Usage, 10, 64)
+	total, _ := strconv.ParseInt(about.Quota.Limit, 10, 64)
+	_, err = s.db.ExecContext(ctx, `UPDATE pikpak_accounts SET used_space = ?, total_space = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, used, total, id)
+	return err
+}
+
+// InitializeAccount cleans up all remote cloud files and offline tasks on PikPak,
+// thoroughly purges the recycle bin, removes local offline tasks and file cache records,
+// and resets quota to restore clean capacity.
+func (s *Service) InitializeAccount(ctx context.Context, id int64) error {
+	client, err := s.GetClient(id)
+	if err != nil {
+		return fmt.Errorf("failed to get client for account %d: %w", id, err)
+	}
+
+	// 1. Delete remote offline tasks on PikPak
+	for {
+		tasksResp, err := client.ListOfflineTasks(ctx, "")
+		if err != nil || tasksResp == nil || len(tasksResp.Tasks) == 0 {
+			break
+		}
+		var taskIDs []string
+		for _, t := range tasksResp.Tasks {
+			taskIDs = append(taskIDs, t.ID)
+		}
+		if len(taskIDs) > 0 {
+			_ = client.DeleteOfflineTasks(ctx, taskIDs, true)
+		}
+		if tasksResp.NextPageToken == "" || len(tasksResp.Tasks) < 100 {
+			break
+		}
+	}
+
+	// 2. Delete remote root files and any files inside "My Pack" on PikPak
+	for {
+		filesResp, err := client.ListFiles(ctx, "", "", 100)
+		if err != nil || filesResp == nil || len(filesResp.Files) == 0 {
+			break
+		}
+		var fileIDs []string
+		var myPackIDs []string
+		for _, f := range filesResp.Files {
+			// Check if default "My Pack" system folder
+			if strings.EqualFold(strings.TrimSpace(f.Name), "My Pack") {
+				myPackIDs = append(myPackIDs, f.ID)
+				continue
+			}
+			fileIDs = append(fileIDs, f.ID)
+		}
+		if len(fileIDs) > 0 {
+			_ = client.DeleteFiles(ctx, fileIDs)
+		}
+		// If "My Pack" folders exist, delete all files and subfolders inside them
+		for _, mpID := range myPackIDs {
+			for {
+				subResp, subErr := client.ListFiles(ctx, mpID, "", 100)
+				if subErr != nil || subResp == nil || len(subResp.Files) == 0 {
+					break
+				}
+				var subIDs []string
+				for _, sf := range subResp.Files {
+					subIDs = append(subIDs, sf.ID)
+				}
+				if len(subIDs) > 0 {
+					_ = client.DeleteFiles(ctx, subIDs)
+				}
+				if subResp.NextPageToken == "" || len(subResp.Files) < 100 {
+					break
+				}
+			}
+		}
+		if filesResp.NextPageToken == "" || len(filesResp.Files) < 100 {
+			break
+		}
+	}
+
+	// 3. Purge recycle bin (trash) completely
+	// 3a. Call EmptyTrash endpoint
+	_ = client.EmptyTrash(ctx)
+
+	// 3b. Query trashed files and permanently batch delete them
+	for {
+		trashResp, err := client.ListTrashFiles(ctx, "", 100)
+		if err != nil || trashResp == nil || len(trashResp.Files) == 0 {
+			break
+		}
+		var trashIDs []string
+		for _, tf := range trashResp.Files {
+			trashIDs = append(trashIDs, tf.ID)
+		}
+		if len(trashIDs) > 0 {
+			_ = client.DeleteFiles(ctx, trashIDs)
+		}
+		if trashResp.NextPageToken == "" || len(trashResp.Files) < 100 {
+			break
+		}
+	}
+
+	// 3c. Final EmptyTrash sweep
+	_ = client.EmptyTrash(ctx)
+
+	// 4. Clear local SQLite offline tasks and file cache for this account
+	_, _ = s.db.ExecContext(ctx, `DELETE FROM offline_tasks WHERE account_id = ?`, id)
+	_, _ = s.db.ExecContext(ctx, `DELETE FROM file_cache WHERE account_id = ?`, id)
+
+	// 5. Reset daily quota count and set status to HEALTHY
+	_, _ = s.db.ExecContext(ctx, `
+		UPDATE pikpak_accounts 
+		SET daily_task_count = 0, status = 'HEALTHY', quota_exhausted_at = NULL, last_error = ''
+		WHERE id = ?
+	`, id)
+
+	// 6. Sync storage quota
+	_ = s.SyncAccountStorage(ctx, id)
+
+	return nil
 }

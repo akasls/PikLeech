@@ -1,12 +1,12 @@
-﻿version: '3.8'
+version: '3.8'
 
 services:
-  pikpak-manager:
+  pikleech:
     build:
       context: .
       dockerfile: Dockerfile
-    image: pikpak-manager:latest
-    container_name: pikpak-manager
+    image: ghcr.io/akasls/pikleech:latest
+    container_name: pikleech
     restart: unless-stopped
     ports:
       - "8080:8080"

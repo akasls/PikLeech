@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from "react"
+import React, { useState, useEffect } from "react"
 import {
   Server,
   Plus,
@@ -15,6 +15,7 @@ import {
   Loader2,
   Play,
   X,
+  Eraser,
 } from "lucide-react"
 import { api, Account } from "../lib/api"
 import { formatBytes, formatDate } from "../lib/utils"
@@ -28,12 +29,28 @@ export const AccountsPage: React.FC = () => {
   const [editingAccount, setEditingAccount] = useState<Account | null>(null)
   const [testingID, setTestingID] = useState<number | null>(null)
   const [testResult, setTestResult] = useState<{ id: number; data: any } | null>(null)
+  const [initializingID, setInitializingID] = useState<number | null>(null)
+  const [initFeedback, setInitFeedback] = useState<{ id: number; message: string; isError?: boolean } | null>(null)
 
   // Standalone Proxy Test Modal
   const [showProxyTestModal, setShowProxyTestModal] = useState(false)
   const [testProxyURL, setTestProxyURL] = useState("")
   const [proxyTesting, setProxyTesting] = useState(false)
   const [proxyTestResult, setProxyTestResult] = useState<any>(null)
+
+  const handleInitializeAccount = async (id: number, name: string) => {
+    setInitializingID(id)
+    setInitFeedback(null)
+    try {
+      await api.initializeAccount(id)
+      setInitFeedback({ id, message: `账号「${name}」已完成初始化：远端文件与离线任务已清空，容量已重置。` })
+      loadAccounts()
+    } catch (err: any) {
+      setInitFeedback({ id, message: `初始化失败: ${err.message}`, isError: true })
+    } finally {
+      setInitializingID(null)
+    }
+  }
 
   const loadAccounts = async () => {
     setLoading(true)
@@ -123,7 +140,7 @@ export const AccountsPage: React.FC = () => {
         return (
           <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
             <CheckCircle2 className="h-3.5 w-3.5" />
-            正常可用
+            正常
           </span>
         )
       case "QUOTA_EXHAUSTED":
@@ -167,27 +184,10 @@ export const AccountsPage: React.FC = () => {
   return (
     <div className="space-y-4">
       {/* Action Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-4">
-        <div>
-          <h2 className="text-xl font-bold tracking-tight">PikPak 多账号管理</h2>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            配置账号凭据、独立代理网络及调度优先级。系统将自动聚合所有账号的存储与每日离线配额
-          </p>
-        </div>
+      <div className="flex items-center justify-between border-b pb-3.5">
+        <h2 className="text-lg font-bold tracking-tight">PikPak 多账号管理</h2>
 
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => {
-              setTestProxyURL("")
-              setProxyTestResult(null)
-              setShowProxyTestModal(true)
-            }}
-            className="flex items-center gap-1.5 rounded-xl border bg-card px-3 py-2 text-xs font-medium hover:bg-secondary text-foreground transition-colors"
-          >
-            <Globe className="h-3.5 w-3.5 text-primary" />
-            测试独立代理
-          </button>
-
           <button
             onClick={loadAccounts}
             className="p-2 rounded-xl border hover:bg-secondary text-muted-foreground hover:text-foreground"
@@ -233,11 +233,8 @@ export const AccountsPage: React.FC = () => {
                   {/* Title & Status */}
                   <div className="flex items-start justify-between gap-2">
                     <div>
-                      <h3 className="font-semibold text-base flex items-center gap-2">
+                      <h3 className="font-semibold text-base">
                         {acc.name}
-                        <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
-                          优先级 {acc.priority}
-                        </span>
                       </h3>
                       <p className="text-xs text-muted-foreground mt-0.5 font-mono">
                         {acc.username || "Token 授权模式"}
@@ -293,11 +290,24 @@ export const AccountsPage: React.FC = () => {
                         : `测试失败: ${testResult.data.error || "未知异常"}`}
                     </div>
                   )}
+
+                  {/* In-card initialization feedback */}
+                  {initFeedback && initFeedback.id === acc.id && (
+                    <div
+                      className={`mt-3 rounded-lg p-2.5 text-xs ${
+                        !initFeedback.isError
+                          ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                          : "bg-destructive/10 text-destructive"
+                      }`}
+                    >
+                      {initFeedback.message}
+                    </div>
+                  )}
                 </div>
 
                 {/* Card Action Buttons */}
                 <div className="mt-5 flex items-center justify-between border-t pt-3.5">
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-1.5 flex-wrap">
                     <button
                       onClick={() => handleTestAccount(acc.id)}
                       disabled={isTestingThis}
@@ -306,6 +316,16 @@ export const AccountsPage: React.FC = () => {
                     >
                       {isTestingThis ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
                       测试账号
+                    </button>
+
+                    <button
+                      onClick={() => handleInitializeAccount(acc.id, acc.name)}
+                      disabled={initializingID === acc.id}
+                      className="flex items-center gap-1 rounded-lg border border-destructive/30 bg-destructive/10 px-2.5 py-1 text-xs font-medium text-destructive hover:bg-destructive/20 disabled:opacity-50"
+                      title="一键清空该账号在 PikPak 上的所有文件与离线任务，恢复空网盘容量"
+                    >
+                      {initializingID === acc.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eraser className="h-3.5 w-3.5" />}
+                      初始化
                     </button>
 
                     {acc.status === "QUOTA_EXHAUSTED" && (
