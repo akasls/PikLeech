@@ -712,7 +712,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
       {/* Policy & Auto Cleanup Tab */}
       {isAdmin && activeTab === "policy" && (
-        <div className="space-y-4 max-w-4xl">
+        <div className="space-y-4 w-full">
           {settingsMsg && (
             <div
               className={`rounded-2xl p-4 text-xs sm:text-sm flex items-center gap-2.5 ${
@@ -1103,7 +1103,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
       {/* Profile / Admin Info Tab */}
       {activeTab === "profile" && (
-        <div className="space-y-4 max-w-4xl animate-in fade-in duration-150">
+        <div className="space-y-4 w-full animate-in fade-in duration-150">
           {profileMsg && (
             <div
               className={`rounded-xl p-3 text-xs flex items-center gap-2 ${
@@ -1204,7 +1204,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
       {/* About Tab */}
       {activeTab === "about" && (
-        <div className="space-y-6 max-w-4xl animate-in fade-in duration-150">
+        <div className="space-y-6 w-full animate-in fade-in duration-150">
           <div className="rounded-3xl border bg-card p-6 sm:p-8 shadow-sm space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center gap-5 pb-6 border-b">
               <img

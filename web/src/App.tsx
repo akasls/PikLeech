@@ -95,7 +95,7 @@ export const App: React.FC = () => {
         onClearSearch={() => setSearchKeyword("")}
       />
 
-      <main className="flex-1 p-3 sm:p-5 md:p-6 lg:p-8 max-w-7xl mx-auto w-full min-w-0 max-w-full overflow-x-hidden">
+      <main className="flex-1 p-3 sm:p-5 md:p-6 lg:p-8 max-w-7xl mx-auto w-full min-w-0 overflow-x-hidden">
         {currentPage === "files" && (
           <FilesPage
             onOpenNewOffline={() => setShowNewOffline(true)}
