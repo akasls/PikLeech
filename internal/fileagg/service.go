@@ -479,7 +479,10 @@ func (s *Service) GetVirtualFile(ctx context.Context, virtualID string) (*Virtua
 		return nil, nil, err
 	}
 
-	vf := s.convertToFile(*fileItem, acc.ID, acc.Name)
+	var ownerID int64 = 1
+	_ = s.db.QueryRowContext(ctx, "SELECT COALESCE(user_id, 1) FROM file_cache WHERE virtual_id = ?", virtualID).Scan(&ownerID)
+
+	vf := s.convertToFile(*fileItem, acc.ID, acc.Name, ownerID)
 	return &vf, client, nil
 }
 

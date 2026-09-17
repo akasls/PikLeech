@@ -1,4 +1,4 @@
-﻿# ==========================================
+# ==========================================
 # Stage 1: Build Frontend (React + Vite)
 # ==========================================
 FROM node:20-alpine AS frontend-builder
@@ -18,9 +18,9 @@ WORKDIR /app
 
 # Enable GOPROXY for fast dependency retrieval
 ENV GOPROXY=https://goproxy.cn,direct
+ARG TARGETOS
+ARG TARGETARCH
 ENV CGO_ENABLED=0
-ENV GOOS=linux
-ENV GOARCH=amd64
 
 COPY go.mod go.sum ./
 RUN go mod download
@@ -33,8 +33,8 @@ COPY cmd/ ./cmd/
 COPY --from=frontend-builder /app/web/dist ./web/dist
 COPY web/embed.go ./web/
 
-# Compile statically linked binary with optimizations
-RUN go build -ldflags="-s -w" -o pikpak-manager ./cmd/server
+# Compile statically linked binary with optimizations for target architecture
+RUN GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -ldflags="-s -w" -o pikpak-manager ./cmd/server
 
 # ==========================================
 # Stage 3: Minimal Production Runtime

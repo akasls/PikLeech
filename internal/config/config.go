@@ -25,9 +25,13 @@ var Global Config
 
 func Load() *Config {
 	port := getEnv("PORT", "8080")
-	dataDir := getEnv("DATA_DIR", "./data")
-	if os.Getenv("IN_DOCKER") == "true" || fileExists("/data") {
-		dataDir = "/data"
+	dataDir := os.Getenv("DATA_DIR")
+	if dataDir == "" {
+		if os.Getenv("IN_DOCKER") == "true" || fileExists("/.dockerenv") {
+			dataDir = "/data"
+		} else {
+			dataDir = "./data"
+		}
 	}
 
 	if err := os.MkdirAll(dataDir, 0755); err != nil {

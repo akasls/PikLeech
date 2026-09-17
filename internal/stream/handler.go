@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 
@@ -21,6 +22,34 @@ func NewHandler(fileSvc *fileagg.Service) *Handler {
 	}
 }
 
+func checkFileOwnership(c *gin.Context, fileOwnerID int64) bool {
+	roleVal, exists := c.Get("role")
+	if !exists {
+		return true
+	}
+	role, _ := roleVal.(string)
+	if role == "admin" {
+		return true
+	}
+
+	uidVal, exists := c.Get("user_id")
+	if !exists {
+		return true
+	}
+	var uid int64
+	switch v := uidVal.(type) {
+	case int64:
+		uid = v
+	case string:
+		uid, _ = strconv.ParseInt(v, 10, 64)
+	}
+
+	if uid > 0 && fileOwnerID > 0 && fileOwnerID != uid {
+		return false
+	}
+	return true
+}
+
 // GetPlaybackInfo returns playback mode, direct media URL, filename, and resolution
 func (h *Handler) GetPlaybackInfo(c *gin.Context) {
 	virtualID := c.Param("virtual_id")
@@ -32,6 +61,11 @@ func (h *Handler) GetPlaybackInfo(c *gin.Context) {
 	vf, client, err := h.fileService.GetVirtualFile(c.Request.Context(), virtualID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("file not found: %v", err)})
+		return
+	}
+
+	if !checkFileOwnership(c, vf.UserID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问其他用户的媒体文件"})
 		return
 	}
 
@@ -82,6 +116,11 @@ func (h *Handler) ProxyStream(c *gin.Context) {
 	vf, client, err := h.fileService.GetVirtualFile(c.Request.Context(), virtualID)
 	if err != nil {
 		c.String(http.StatusNotFound, "file not found: %v", err)
+		return
+	}
+
+	if !checkFileOwnership(c, vf.UserID) {
+		c.String(http.StatusForbidden, "forbidden: access denied")
 		return
 	}
 

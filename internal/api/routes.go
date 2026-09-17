@@ -74,6 +74,15 @@ func NewServer(
 func (s *Server) setupRoutes() {
 	r := s.Engine
 
+	// Global Security Headers Middleware
+	r.Use(func(c *gin.Context) {
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("X-Frame-Options", "SAMEORIGIN")
+		c.Header("X-XSS-Protection", "1; mode=block")
+		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
+		c.Next()
+	})
+
 	// 1. Healthcheck for Docker
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok", "system": "pikpak-manager"})
@@ -181,13 +190,20 @@ func (s *Server) setupRoutes() {
 				f, err := distFS.Open(strings.TrimPrefix(path, "/"))
 				if err == nil {
 					_ = f.Close()
+					// High-performance cache policy: immutable 1-year cache for fingerprinted assets, 24h for images
+					if strings.HasPrefix(path, "/assets/") {
+						c.Header("Cache-Control", "public, max-age=31536000, immutable")
+					} else if strings.HasSuffix(path, ".png") || strings.HasSuffix(path, ".svg") || strings.HasSuffix(path, ".ico") {
+						c.Header("Cache-Control", "public, max-age=86400")
+					}
 					fileServer.ServeHTTP(c.Writer, c.Request)
 					return
 				}
 
-				// Fallback to index.html for SPA routing
+				// Fallback to index.html for SPA routing (never cache index.html so updates are instant)
 				indexContent, err := fs.ReadFile(distFS, "index.html")
 				if err == nil {
+					c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
 					c.Data(http.StatusOK, "text/html; charset=utf-8", indexContent)
 					return
 				}
@@ -380,6 +396,10 @@ func (s *Server) handleBatchDelete(c *gin.Context) {
 	uid, username, role := getUserContext(c)
 	res, err := s.FileService.BatchDelete(c.Request.Context(), req, uid, role)
 	if err != nil {
+		if strings.Contains(err.Error(), "无权") {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -394,12 +414,16 @@ func (s *Server) handleRenameFile(c *gin.Context) {
 		Name      string `json:"name" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
 	}
 
 	uid, username, role := getUserContext(c)
 	if err := s.FileService.RenameFile(c.Request.Context(), req.VirtualID, req.Name, uid, role); err != nil {
+		if strings.Contains(err.Error(), "无权") {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -431,9 +455,10 @@ func (s *Server) handleListOfflineTasks(c *gin.Context) {
 
 func (s *Server) handleGetOfflineTask(c *gin.Context) {
 	id := c.Param("id")
-	task, err := s.OfflineService.GetTask(c.Request.Context(), id)
+	uid, _, role := getUserContext(c)
+	task, err := s.OfflineService.GetTaskUser(c.Request.Context(), id, uid, role)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, task)
@@ -459,8 +484,9 @@ func (s *Server) handleSubmitOfflineTask(c *gin.Context) {
 
 func (s *Server) handleDeleteOfflineTask(c *gin.Context) {
 	id := c.Param("id")
-	if err := s.OfflineService.DeleteTask(c.Request.Context(), id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	uid, _, role := getUserContext(c)
+	if err := s.OfflineService.DeleteTaskUser(c.Request.Context(), id, uid, role); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
@@ -468,8 +494,9 @@ func (s *Server) handleDeleteOfflineTask(c *gin.Context) {
 
 func (s *Server) handleCancelOfflineTask(c *gin.Context) {
 	id := c.Param("id")
-	if err := s.OfflineService.CancelTask(c.Request.Context(), id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	uid, _, role := getUserContext(c)
+	if err := s.OfflineService.CancelTaskUser(c.Request.Context(), id, uid, role); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
@@ -477,10 +504,10 @@ func (s *Server) handleCancelOfflineTask(c *gin.Context) {
 
 func (s *Server) handleRetryOfflineTask(c *gin.Context) {
 	id := c.Param("id")
-	uid, username, _ := getUserContext(c)
-	res, err := s.OfflineService.RetryTask(c.Request.Context(), id, uid, username)
+	uid, username, role := getUserContext(c)
+	res, err := s.OfflineService.RetryTask(c.Request.Context(), id, uid, username, role)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, res)

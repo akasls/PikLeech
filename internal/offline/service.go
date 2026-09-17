@@ -345,6 +345,18 @@ func (s *Service) scanTask(scanner interface {
 	return &t, nil
 }
 
+// GetTaskUser retrieves task with user permission validation (non-admin can only view their own tasks)
+func (s *Service) GetTaskUser(ctx context.Context, id string, userID int64, userRole string) (*Task, error) {
+	task, err := s.GetTask(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if userRole != "admin" && userID > 0 && task.UserID != userID {
+		return nil, errors.New("无权访问其他用户的离线任务")
+	}
+	return task, nil
+}
+
 // DeleteTask removes an offline task record and optionally removes it from PikPak
 func (s *Service) DeleteTask(ctx context.Context, id string) error {
 	task, err := s.GetTask(ctx, id)
@@ -360,6 +372,15 @@ func (s *Service) DeleteTask(ctx context.Context, id string) error {
 
 	_, err = s.db.ExecContext(ctx, "DELETE FROM offline_tasks WHERE id = ?", id)
 	return err
+}
+
+// DeleteTaskUser deletes task with user permission validation
+func (s *Service) DeleteTaskUser(ctx context.Context, id string, userID int64, userRole string) error {
+	task, err := s.GetTaskUser(ctx, id, userID, userRole)
+	if err != nil {
+		return err
+	}
+	return s.DeleteTask(ctx, task.ID)
 }
 
 // CancelTask cancels an active task
@@ -382,11 +403,28 @@ func (s *Service) CancelTask(ctx context.Context, id string) error {
 	return err
 }
 
-// RetryTask resubmits a failed task
-func (s *Service) RetryTask(ctx context.Context, id string, userID int64, username string) (*TaskResult, error) {
+// CancelTaskUser cancels task with user permission validation
+func (s *Service) CancelTaskUser(ctx context.Context, id string, userID int64, userRole string) error {
+	task, err := s.GetTaskUser(ctx, id, userID, userRole)
+	if err != nil {
+		return err
+	}
+	return s.CancelTask(ctx, task.ID)
+}
+
+// RetryTask resubmits a failed task with ownership validation
+func (s *Service) RetryTask(ctx context.Context, id string, userID int64, username string, userRole ...string) (*TaskResult, error) {
 	task, err := s.GetTask(ctx, id)
 	if err != nil {
 		return nil, err
+	}
+
+	role := "admin"
+	if len(userRole) > 0 && userRole[0] != "" {
+		role = userRole[0]
+	}
+	if role != "admin" && userID > 0 && task.UserID != userID {
+		return nil, errors.New("无权重试其他用户的离线任务")
 	}
 
 	uid := userID

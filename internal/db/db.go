@@ -17,8 +17,8 @@ var DB *sql.DB
 
 // InitDB initializes SQLite, configures WAL mode, runs migrations, and seeds admin.
 func InitDB(cfg *config.Config) (*sql.DB, error) {
-	// DSN with pragmas
-	dsn := fmt.Sprintf("%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)", cfg.DBPath)
+	// DSN with performance pragmas: WAL mode, 10s busy timeout, 64MB cache, RAM temp store, 256MB mmap
+	dsn := fmt.Sprintf("%s?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)&_pragma=cache_size(-64000)&_pragma=temp_store(MEMORY)&_pragma=mmap_size(268435456)", cfg.DBPath)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open sqlite database at %s: %w", cfg.DBPath, err)
